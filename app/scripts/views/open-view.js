@@ -1,33 +1,44 @@
-const Backbone = require('backbone');
-const kdbxweb = require('kdbxweb');
-const OpenConfigView = require('./open-config-view');
-const Keys = require('../const/keys');
-const Alerts = require('../comp/alerts');
-const SecureInput = require('../comp/secure-input');
-const DropboxChooser = require('../comp/dropbox-chooser');
-const KeyHandler = require('../comp/key-handler');
-const StorageFileListView = require('../views/storage-file-list-view');
-const Logger = require('../util/logger');
-const Locale = require('../util/locale');
-const UrlUtil = require('../util/url-util');
-const InputFx = require('../util/input-fx');
-const Comparators = require('../util/comparators');
-const Storage = require('../storage');
-const Launcher = require('../comp/launcher');
-const FocusDetector = require('../comp/focus-detector');
-const FeatureDetector = require('../util/feature-detector');
+import kdbxweb from 'kdbxweb';
+import { View } from 'framework/views/view';
+import { Events } from 'framework/events';
+import { Storage } from 'storage';
+import { DropboxChooser } from 'comp/app/dropbox-chooser';
+import { FocusDetector } from 'comp/browser/focus-detector';
+import { KeyHandler } from 'comp/browser/key-handler';
+import { SecureInput } from 'comp/browser/secure-input';
+import { Launcher } from 'comp/launcher';
+import { Alerts } from 'comp/ui/alerts';
+import { UsbListener } from 'comp/app/usb-listener';
+import { YubiKey } from 'comp/app/yubikey';
+import { Keys } from 'const/keys';
+import { Comparators } from 'util/data/comparators';
+import { Features } from 'util/features';
+import { UrlFormat } from 'util/formatting/url-format';
+import { Locale } from 'util/locale';
+import { Logger } from 'util/logger';
+import { InputFx } from 'util/ui/input-fx';
+import { OpenConfigView } from 'views/open-config-view';
+import { StorageFileListView } from 'views/storage-file-list-view';
+import { OpenChalRespView } from 'views/open-chal-resp-view';
+import { omit } from 'util/fn';
+import { GeneratorView } from 'views/generator-view';
+import { NativeModules } from 'comp/launcher/native-modules';
+import template from 'templates/open.hbs';
 
 const logger = new Logger('open-view');
 
-const OpenView = Backbone.View.extend({
-    template: require('templates/open.hbs'),
+class OpenView extends View {
+    parent = '.app__body';
+    modal = 'open';
 
-    events: {
+    template = template;
+
+    events = {
         'change .open__file-ctrl': 'fileSelected',
         'click .open__icon-open': 'openFile',
         'click .open__icon-new': 'createNew',
-        'click .open__icon-import-xml': 'importFromXml',
         'click .open__icon-demo': 'createDemo',
+        'click .open__icon-yubikey': 'openYubiKey',
         'click .open__icon-more': 'toggleMore',
         'click .open__icon-storage': 'openStorage',
         'click .open__icon-settings': 'openSettings',
@@ -38,20 +49,91 @@ const OpenView = Backbone.View.extend({
         'keypress .open__pass-input': 'inputKeypress',
         'click .open__pass-enter-btn': 'openDb',
         'click .open__settings-key-file': 'openKeyFile',
+        'click .open__settings-yubikey': 'selectYubiKeyChalResp',
         'click .open__last-item': 'openLast',
-        'dragover': 'dragover',
-        'dragleave': 'dragleave',
-        'drop': 'drop'
-    },
+        'click .open__icon-generate': 'toggleGenerator',
+        dragover: 'dragover',
+        dragleave: 'dragleave',
+        drop: 'drop'
+    };
 
-    views: null,
-    params: null,
-    passwordInput: null,
-    busy: false,
-    currentSelectedIndex: -1,
+    params = null;
+    passwordInput = null;
+    busy = false;
+    currentSelectedIndex = -1;
+    encryptedPassword = null;
 
-    initialize: function () {
-        this.views = {};
+    constructor(model) {
+        super(model);
+        window.$ = $;
+        this.resetParams();
+        this.passwordInput = new SecureInput();
+        this.onKey(Keys.DOM_VK_Z, this.undoKeyPress, KeyHandler.SHORTCUT_ACTION, 'open');
+        this.onKey(Keys.DOM_VK_TAB, this.tabKeyPress, null, 'open');
+        this.onKey(Keys.DOM_VK_ENTER, this.enterKeyPress, null, 'open');
+        this.onKey(Keys.DOM_VK_RETURN, this.enterKeyPress, null, 'open');
+        this.onKey(Keys.DOM_VK_DOWN, this.moveOpenFileSelectionDown, null, 'open');
+        this.onKey(Keys.DOM_VK_UP, this.moveOpenFileSelectionUp, null, 'open');
+        this.listenTo(Events, 'main-window-focus', this.windowFocused.bind(this));
+        this.listenTo(Events, 'usb-devices-changed', this.usbDevicesChanged.bind(this));
+        this.once('remove', () => {
+            this.passwordInput.reset();
+        });
+        this.listenTo(Events, 'user-idle', this.userIdle);
+    }
+
+    render() {
+        if (this.dragTimeout) {
+            clearTimeout(this.dragTimeout);
+        }
+        const storageProviders = [];
+        if (this.model.settings.canOpenStorage) {
+            Object.keys(Storage).forEach((name) => {
+                const prv = Storage[name];
+                if (!prv.system && prv.enabled) {
+                    storageProviders.push(prv);
+                }
+            });
+        }
+        storageProviders.sort((x, y) => (x.uipos || Infinity) - (y.uipos || Infinity));
+        const showMore =
+            storageProviders.length ||
+            this.model.settings.canOpenSettings ||
+            this.model.settings.canOpenGenerator;
+        const showLogo =
+            !showMore &&
+            !this.model.settings.canOpen &&
+            !this.model.settings.canCreate &&
+            !(this.model.settings.canOpenDemo && !this.model.settings.demoOpened);
+        const hasYubiKeys = !!UsbListener.attachedYubiKeys;
+        const canOpenYubiKey =
+            hasYubiKeys &&
+            this.model.settings.canOpenOtpDevice &&
+            this.model.settings.yubiKeyShowIcon &&
+            !this.model.files.get('yubikey');
+        const canUseChalRespYubiKey = hasYubiKeys && this.model.settings.yubiKeyShowChalResp;
+
+        super.render({
+            lastOpenFiles: this.getLastOpenFiles(),
+            canOpenKeyFromDropbox: !Launcher && Storage.dropbox.enabled,
+            demoOpened: this.model.settings.demoOpened,
+            storageProviders,
+            canOpen: this.model.settings.canOpen,
+            canOpenDemo: this.model.settings.canOpenDemo,
+            canOpenSettings: this.model.settings.canOpenSettings,
+            canOpenGenerator: this.model.settings.canOpenGenerator,
+            canCreate: this.model.settings.canCreate,
+            canRemoveLatest: this.model.settings.canRemoveLatest,
+            canOpenYubiKey,
+            canUseChalRespYubiKey,
+            showMore,
+            showLogo
+        });
+        this.inputEl = this.$el.find('.open__pass-input');
+        this.passwordInput.setElement(this.inputEl);
+    }
+
+    resetParams() {
         this.params = {
             id: null,
             name: '',
@@ -61,172 +143,137 @@ const OpenView = Backbone.View.extend({
             keyFileData: null,
             keyFilePath: null,
             fileData: null,
-            rev: null
+            rev: null,
+            opts: null,
+            chalResp: null
         };
-        this.passwordInput = new SecureInput();
-        KeyHandler.onKey(Keys.DOM_VK_Z, this.undoKeyPress, this, KeyHandler.SHORTCUT_ACTION);
-        KeyHandler.onKey(Keys.DOM_VK_TAB, this.tabKeyPress, this);
-        KeyHandler.onKey(Keys.DOM_VK_ENTER, this.enterKeyPress, this);
-        KeyHandler.onKey(Keys.DOM_VK_RETURN, this.enterKeyPress, this);
-        KeyHandler.onKey(Keys.DOM_VK_DOWN, this.moveOpenFileSelectionDown, this);
-        KeyHandler.onKey(Keys.DOM_VK_UP, this.moveOpenFileSelectionUp, this);
-        this.listenTo(Backbone, 'main-window-focus', this.windowFocused.bind(this));
-    },
+    }
 
-    render: function () {
-        if (this.dragTimeout) {
-            clearTimeout(this.dragTimeout);
-        }
-        const storageProviders = [];
-        Object.keys(Storage).forEach(name => {
-            const prv = Storage[name];
-            if (!prv.system && prv.enabled) {
-                storageProviders.push(prv);
-            }
-        });
-        storageProviders.sort((x, y) => (x.uipos || Infinity) - (y.uipos || Infinity));
-        const showMore = storageProviders.length || this.model.settings.get('canOpenSettings');
-        const showLogo = !showMore && !this.model.settings.get('canOpen') && !this.model.settings.get('canCreate') &&
-            !(this.model.settings.get('canOpenDemo') && !this.model.settings.get('demoOpened'));
-        this.renderTemplate({
-            lastOpenFiles: this.getLastOpenFiles(),
-            canOpenKeyFromDropbox: !Launcher && Storage.dropbox.enabled,
-            demoOpened: this.model.settings.get('demoOpened'),
-            storageProviders: storageProviders,
-            canOpen: this.model.settings.get('canOpen'),
-            canOpenDemo: this.model.settings.get('canOpenDemo'),
-            canOpenSettings: this.model.settings.get('canOpenSettings'),
-            canCreate: this.model.settings.get('canCreate'),
-            canImportXml: this.model.settings.get('canImportXml'),
-            canRemoveLatest: this.model.settings.get('canRemoveLatest'),
-            showMore: showMore,
-            showLogo: showLogo
-        });
-        this.inputEl = this.$el.find('.open__pass-input');
-        this.passwordInput.setElement(this.inputEl);
-        return this;
-    },
-
-    windowFocused: function() {
+    windowFocused() {
         this.inputEl.focus();
-    },
+        this.checkIfEncryptedPasswordDateIsValid();
+    }
 
-    focusInput: function(focusOnMobile) {
-        if (FocusDetector.hasFocus() && (focusOnMobile || !FeatureDetector.isMobile)) {
+    focusInput(focusOnMobile) {
+        if (FocusDetector.hasFocus() && (focusOnMobile || !Features.isMobile)) {
             this.inputEl.focus();
         }
-    },
+    }
 
-    getLastOpenFiles: function() {
-        return this.model.fileInfos.map(f => {
-            let icon = 'file-text';
-            const storage = Storage[f.get('storage')];
+    getLastOpenFiles() {
+        return this.model.fileInfos.map((fileInfo) => {
+            let icon = 'file-alt';
+            const storage = Storage[fileInfo.storage];
             if (storage && storage.icon) {
                 icon = storage.icon;
             }
-            if (storage && storage.iconSvg) {
-                icon = null;
-            }
             return {
-                id: f.get('id'),
-                name: f.get('name'),
-                path: this.getDisplayedPath(f),
-                icon: icon,
-                iconSvg: storage ? storage.iconSvg : undefined
+                id: fileInfo.id,
+                name: fileInfo.name,
+                path: this.getDisplayedPath(fileInfo),
+                icon
             };
         });
-    },
+    }
 
-    getDisplayedPath: function(fileInfo) {
-        const storage = fileInfo.get('storage');
+    getDisplayedPath(fileInfo) {
+        const storage = fileInfo.storage;
         if (storage === 'file' || storage === 'webdav') {
-            return fileInfo.get('path');
+            return fileInfo.path;
         }
         return null;
-    },
+    }
 
-    remove: function() {
-        this.passwordInput.reset();
-        KeyHandler.offKey(Keys.DOM_VK_Z, this.undoKeyPress, this);
-        KeyHandler.offKey(Keys.DOM_VK_TAB, this.tabKeyPress, this);
-        KeyHandler.offKey(Keys.DOM_VK_ENTER, this.enterKeyPress, this);
-        KeyHandler.offKey(Keys.DOM_VK_RETURN, this.enterKeyPress, this);
-        KeyHandler.offKey(Keys.DOM_VK_DOWN, this.moveOpenFileSelectionDown, this);
-        KeyHandler.offKey(Keys.DOM_VK_UP, this.moveOpenFileSelectionUp, this);
-        Backbone.View.prototype.remove.apply(this, arguments);
-    },
-
-    showLocalFileAlert: function() {
-        if (this.model.settings.get('skipOpenLocalWarn')) {
+    showLocalFileAlert() {
+        if (this.model.settings.skipOpenLocalWarn) {
             return;
         }
         Alerts.alert({
             header: Locale.openLocalFile,
             body: Locale.openLocalFileBody,
-            icon: 'file-text',
+            icon: 'file-alt',
             buttons: [
-                {result: 'skip', title: Locale.openLocalFileDontShow, error: true},
-                {result: 'ok', title: Locale.alertOk}
+                { result: 'skip', title: Locale.openLocalFileDontShow, error: true },
+                { result: 'ok', title: Locale.alertOk }
             ],
             click: '',
             esc: '',
             enter: '',
-            success: res => {
+            success: (res) => {
                 this.focusInput();
                 if (res === 'skip') {
-                    this.model.settings.set('skipOpenLocalWarn', true);
+                    this.model.settings.skipOpenLocalWarn = true;
                 }
             }
         });
-    },
+    }
 
-    fileSelected: function(e) {
+    fileSelected(e) {
         const file = e.target.files[0];
         if (file) {
-            this.processFile(file, success => {
+            this.processFile(file, (success) => {
                 if (success && !file.path && this.reading === 'fileData') {
                     this.showLocalFileAlert();
                 }
             });
         }
-    },
+    }
 
-    processFile: function(file, complete) {
+    processFile(file, complete) {
         const reader = new FileReader();
-        reader.onload = e => {
+        reader.onload = (e) => {
             let success = false;
             switch (this.reading) {
-                case 'fileData':
-                    if (!this.checkOpenFileFormat(e.target.result)) {
-                        break;
+                case 'fileData': {
+                    const format = this.getOpenFileFormat(e.target.result);
+                    switch (format) {
+                        case 'kdbx':
+                            this.params.id = null;
+                            this.params.fileData = e.target.result;
+                            this.params.name = file.name.replace(/(.+)\.\w+$/i, '$1');
+                            this.params.path = file.path || null;
+                            this.params.storage = file.path ? 'file' : null;
+                            this.params.rev = null;
+                            if (!this.params.keyFileData) {
+                                this.params.keyFileName = null;
+                            }
+                            this.encryptedPassword = null;
+                            this.displayOpenFile();
+                            this.displayOpenKeyFile();
+                            this.displayOpenDeviceOwnerAuth();
+                            success = true;
+                            break;
+                        case 'xml':
+                            this.params.id = null;
+                            this.params.fileXml = kdbxweb.ByteUtils.bytesToString(e.target.result);
+                            this.params.name = file.name.replace(/\.\w+$/i, '');
+                            this.params.path = null;
+                            this.params.storage = null;
+                            this.params.rev = null;
+                            this.encryptedPassword = null;
+                            this.importDbWithXml();
+                            this.displayOpenDeviceOwnerAuth();
+                            success = true;
+                            break;
+                        case 'kdb':
+                            Alerts.error({
+                                header: Locale.openWrongFile,
+                                body: Locale.openKdbFileBody
+                            });
+                            break;
+                        default:
+                            Alerts.error({
+                                header: Locale.openWrongFile,
+                                body: Locale.openWrongFileBody
+                            });
+                            break;
                     }
-                    this.params.id = null;
-                    this.params.fileData = e.target.result;
-                    this.params.name = file.name.replace(/(.+)\.\w+$/i, '$1');
-                    this.params.path = file.path || null;
-                    this.params.storage = file.path ? 'file' : null;
-                    this.params.rev = null;
-                    if (!this.params.keyFileData) {
-                        this.params.keyFileName = null;
-                    }
-                    this.displayOpenFile();
-                    this.displayOpenKeyFile();
-                    success = true;
                     break;
-                case 'fileXml':
-                    this.params.id = null;
-                    this.params.fileXml = e.target.result;
-                    this.params.name = file.name.replace(/\.\w+$/i, '');
-                    this.params.path = null;
-                    this.params.storage = null;
-                    this.params.rev = null;
-                    this.importDbWithXml();
-                    success = true;
-                    break;
+                }
                 case 'keyFileData':
                     this.params.keyFileData = e.target.result;
                     this.params.keyFileName = file.name;
-                    if (this.model.settings.get('rememberKeyFiles') === 'path') {
+                    if (this.model.settings.rememberKeyFiles === 'path') {
                         this.params.keyFilePath = file.path;
                     }
                     this.displayOpenKeyFile();
@@ -248,42 +295,68 @@ const OpenView = Backbone.View.extend({
         } else {
             reader.readAsArrayBuffer(file);
         }
-    },
+    }
 
-    checkOpenFileFormat: function(fileData) {
-        const fileSig = fileData.byteLength < 8 ? null : new Uint32Array(fileData, 0, 2);
-        if (!fileSig || fileSig[0] !== kdbxweb.Consts.Signatures.FileMagic) {
-            Alerts.error({ header: Locale.openWrongFile, body: Locale.openWrongFileBody });
-            return false;
+    getOpenFileFormat(fileData) {
+        if (fileData.byteLength < 8) {
+            return undefined;
         }
-        if (fileSig[1] === kdbxweb.Consts.Signatures.Sig2Kdb) {
-            Alerts.error({ header: Locale.openWrongFile, body: Locale.openKdbFileBody });
-            return false;
+        const fileSig = new Uint32Array(fileData, 0, 2);
+        if (fileSig[0] === kdbxweb.Consts.Signatures.FileMagic) {
+            if (fileSig[1] === kdbxweb.Consts.Signatures.Sig2Kdb) {
+                return 'kdb';
+            } else if (fileSig[1] === kdbxweb.Consts.Signatures.Sig2Kdbx) {
+                return 'kdbx';
+            } else {
+                return undefined;
+            }
+        } else if (this.model.settings.canImportXml) {
+            try {
+                const str = kdbxweb.ByteUtils.bytesToString(fileSig).trim();
+                if (str.startsWith('<?xml')) {
+                    return 'xml';
+                }
+            } catch (e) {}
+            return undefined;
+        } else {
+            return undefined;
         }
-        if (fileSig[1] !== kdbxweb.Consts.Signatures.Sig2Kdbx) {
-            Alerts.error({ header: Locale.openWrongFile, body: Locale.openWrongFileBody });
-            return false;
-        }
-        return true;
-    },
+    }
 
-    displayOpenFile: function() {
+    displayOpenFile() {
         this.$el.addClass('open--file');
-        this.$el.find('.open__settings-key-file').removeClass('hide');
+        this.$el.find('.open__settings-key-file,.open__settings-yubikey').removeClass('hide');
         this.inputEl[0].removeAttribute('readonly');
         this.inputEl[0].setAttribute('placeholder', Locale.openPassFor + ' ' + this.params.name);
         this.focusInput();
-    },
+    }
 
-    displayOpenKeyFile: function() {
+    displayOpenKeyFile() {
         this.$el.toggleClass('open--key-file', !!this.params.keyFileName);
-        this.$el.find('.open__settings-key-file-name').text(this.params.keyFileName || this.params.keyFilePath || Locale.openKeyFile);
+        this.$el
+            .find('.open__settings-key-file-name')
+            .text(this.params.keyFileName || this.params.keyFilePath || Locale.openKeyFile);
         this.focusInput();
-    },
+    }
 
-    setFile: function(file, keyFile, fileReadyCallback) {
+    displayOpenChalResp() {
+        this.$el
+            .find('.open__settings-yubikey')
+            .toggleClass('open__settings-yubikey--active', !!this.params.chalResp);
+    }
+
+    displayOpenDeviceOwnerAuth() {
+        const available = !!this.encryptedPassword;
+        const passEmpty = !this.passwordInput.length;
+        const canUseEncryptedPassword = available && passEmpty;
+        this.el
+            .querySelector('.open__pass-enter-btn')
+            .classList.toggle('open__pass-enter-btn--touch-id', canUseEncryptedPassword);
+    }
+
+    setFile(file, keyFile, fileReadyCallback) {
         this.reading = 'fileData';
-        this.processFile(file, success => {
+        this.processFile(file, (success) => {
             if (success && keyFile) {
                 this.reading = 'keyFileData';
                 this.processFile(keyFile);
@@ -292,26 +365,19 @@ const OpenView = Backbone.View.extend({
                 fileReadyCallback();
             }
         });
-    },
+    }
 
-    openFile: function() {
-        if (this.model.settings.get('canOpen') === false) {
+    openFile() {
+        if (this.model.settings.canOpen === false) {
             return;
         }
         if (!this.busy) {
             this.closeConfig();
             this.openAny('fileData');
         }
-    },
+    }
 
-    importFromXml: function() {
-        if (!this.busy) {
-            this.closeConfig();
-            this.openAny('fileXml', 'xml');
-        }
-    },
-
-    openKeyFile: function(e) {
+    openKeyFile(e) {
         if ($(e.target).hasClass('open__settings-key-file-dropbox')) {
             this.openKeyFileFromDropbox();
         } else if (!this.busy && this.params.name) {
@@ -325,9 +391,9 @@ const OpenView = Backbone.View.extend({
                 this.openAny('keyFileData');
             }
         }
-    },
+    }
 
-    openKeyFileFromDropbox: function() {
+    openKeyFileFromDropbox() {
         if (!this.busy) {
             new DropboxChooser((err, res) => {
                 if (err) {
@@ -338,13 +404,16 @@ const OpenView = Backbone.View.extend({
                 this.displayOpenKeyFile();
             }).choose();
         }
-    },
+    }
 
-    openAny: function(reading, ext) {
+    openAny(reading, ext) {
         this.reading = reading;
         this.params[reading] = null;
 
-        const fileInput = this.$el.find('.open__file-ctrl').attr('accept', ext || '').val(null);
+        const fileInput = this.$el
+            .find('.open__file-ctrl')
+            .attr('accept', ext || '')
+            .val(null);
 
         if (Launcher && Launcher.openFileChooser) {
             Launcher.openFileChooser((err, file) => {
@@ -357,22 +426,24 @@ const OpenView = Backbone.View.extend({
         } else {
             fileInput.click();
         }
-    },
+    }
 
-    openLast: function(e) {
+    openLast(e) {
         if (this.busy) {
             return;
         }
         const id = $(e.target).closest('.open__last-item').data('id').toString();
         if ($(e.target).is('.open__last-item-icon-del')) {
             const fileInfo = this.model.fileInfos.get(id);
-            if (!fileInfo.get('storage') || fileInfo.get('modified')) {
+            if (!fileInfo.storage || fileInfo.modified) {
                 Alerts.yesno({
                     header: Locale.openRemoveLastQuestion,
-                    body: fileInfo.get('modified') ? Locale.openRemoveLastQuestionModBody : Locale.openRemoveLastQuestionBody,
+                    body: fileInfo.modified
+                        ? Locale.openRemoveLastQuestionModBody
+                        : Locale.openRemoveLastQuestionBody,
                     buttons: [
-                        {result: 'yes', title: Locale.alertYes},
-                        {result: '', title: Locale.alertNo}
+                        { result: 'yes', title: Locale.alertYes },
+                        { result: '', title: Locale.alertNo }
                     ],
                     success: () => {
                         this.removeFile(id);
@@ -386,32 +457,32 @@ const OpenView = Backbone.View.extend({
 
         const fileInfo = this.model.fileInfos.get(id);
         this.showOpenFileInfo(fileInfo, true);
-    },
+    }
 
-    removeFile: function(id) {
+    removeFile(id) {
         this.model.removeFileInfo(id);
         this.$el.find('.open__last-item[data-id="' + id + '"]').remove();
-        this.initialize();
+        this.resetParams();
         this.render();
-    },
+    }
 
-    inputKeydown: function(e) {
+    inputKeydown(e) {
         const code = e.keyCode || e.which;
         if (code === Keys.DOM_VK_RETURN) {
             this.openDb();
         } else if (code === Keys.DOM_VK_CAPS_LOCK) {
             this.toggleCapsLockWarning(false);
         }
-    },
+    }
 
-    inputKeyup: function(e) {
+    inputKeyup(e) {
         const code = e.keyCode || e.which;
         if (code === Keys.DOM_VK_CAPS_LOCK) {
             this.toggleCapsLockWarning(false);
         }
-    },
+    }
 
-    inputKeypress: function(e) {
+    inputKeypress(e) {
         const charCode = e.keyCode || e.which;
         const ch = String.fromCharCode(charCode);
         const lower = ch.toLowerCase();
@@ -419,20 +490,27 @@ const OpenView = Backbone.View.extend({
         if (lower !== upper && !e.shiftKey) {
             this.toggleCapsLockWarning(ch !== lower);
         }
-    },
+    }
 
-    toggleCapsLockWarning: function(on) {
+    inputInput() {
+        this.displayOpenDeviceOwnerAuth();
+    }
+
+    toggleCapsLockWarning(on) {
         this.$el.find('.open__pass-warning').toggleClass('invisible', !on);
-    },
+    }
 
-    dragover: function(e) {
-        if (this.model.settings.get('canOpen') === false) {
+    dragover(e) {
+        if (this.model.settings.canOpen === false) {
             return;
         }
         e.preventDefault();
         e.stopPropagation();
-        const dt = e.originalEvent.dataTransfer;
-        if (!dt.types || (dt.types.indexOf ? dt.types.indexOf('Files') === -1 : !dt.types.contains('Files'))) {
+        const dt = e.dataTransfer;
+        if (
+            !dt.types ||
+            (dt.types.indexOf ? dt.types.indexOf('Files') === -1 : !dt.types.contains('Files'))
+        ) {
             dt.dropEffect = 'none';
             return;
         }
@@ -443,10 +521,10 @@ const OpenView = Backbone.View.extend({
         if (!this.$el.hasClass('open--drag')) {
             this.$el.addClass('open--drag');
         }
-    },
+    }
 
-    dragleave: function() {
-        if (this.model.settings.get('canOpen') === false) {
+    dragleave() {
+        if (this.model.settings.canOpen === false) {
             return;
         }
         if (this.dragTimeout) {
@@ -455,10 +533,10 @@ const OpenView = Backbone.View.extend({
         this.dragTimeout = setTimeout(() => {
             this.$el.removeClass('open--drag');
         }, 100);
-    },
+    }
 
-    drop: function(e) {
-        if (this.model.settings.get('canOpen') === false) {
+    drop(e) {
+        if (this.model.settings.canOpen === false) {
             return;
         }
         e.preventDefault();
@@ -470,54 +548,75 @@ const OpenView = Backbone.View.extend({
         }
         this.closeConfig();
         this.$el.removeClass('open--drag');
-        const files = e.target.files || e.originalEvent.dataTransfer.files;
-        const dataFile = _.find(files, file => file.name.split('.').pop().toLowerCase() === 'kdbx');
-        const keyFile = _.find(files, file => file.name.split('.').pop().toLowerCase() === 'key');
+        const files = [...(e.target.files || e.dataTransfer.files)];
+        const dataFile = files.find((file) => /\.kdbx$/i.test(file.name));
+        const keyFile = files.find((file) => /\.keyx?$/i.test(file.name));
         if (dataFile) {
-            this.setFile(dataFile, keyFile,
-                dataFile.path ? null : this.showLocalFileAlert.bind(this));
+            this.setFile(
+                dataFile,
+                keyFile,
+                dataFile.path ? null : this.showLocalFileAlert.bind(this)
+            );
+            return;
         }
-    },
+        if (this.model.settings.canImportXml) {
+            const xmlFile = files.find((file) => /\.xml$/i.test(file.name));
+            if (xmlFile) {
+                this.setFile(xmlFile, null, this.showLocalFileAlert.bind(this));
+                return;
+            }
+        }
+        if (this.model.settings.canImportCsv) {
+            const csvFile = files.find((file) => /\.csv$/i.test(file.name));
+            if (csvFile) {
+                Events.emit('import-csv-requested', csvFile);
+            }
+        }
+    }
 
     undoKeyPress(e) {
         e.preventDefault();
-    },
+    }
 
     tabKeyPress() {
         this.$el.addClass('open--show-focus');
-    },
+    }
 
     enterKeyPress(e) {
         const el = this.$el.find('[tabindex]:focus');
         if (el.length) {
             el.trigger('click', e);
         }
-    },
+    }
 
-    showOpenFileInfo: function(fileInfo, fileWasClicked) {
+    showOpenFileInfo(fileInfo, fileWasClicked) {
         if (this.busy || !fileInfo) {
             return;
         }
         this.params.id = fileInfo.id;
-        this.params.storage = fileInfo.get('storage');
-        this.params.path = fileInfo.get('path');
-        this.params.name = fileInfo.get('name');
+        this.params.storage = fileInfo.storage;
+        this.params.path = fileInfo.path;
+        this.params.name = fileInfo.name;
         this.params.fileData = null;
         this.params.rev = null;
-        this.params.keyFileName = fileInfo.get('keyFileName');
-        this.params.keyFilePath = fileInfo.get('keyFilePath');
+        this.params.keyFileName = fileInfo.keyFileName;
+        this.params.keyFilePath = fileInfo.keyFilePath;
         this.params.keyFileData = null;
+        this.params.opts = fileInfo.opts;
+        this.params.chalResp = fileInfo.chalResp;
+        this.setEncryptedPassword(fileInfo);
+
         this.displayOpenFile();
         this.displayOpenKeyFile();
-
-        this.openFileWithFingerprint(fileInfo);
+        this.displayOpenChalResp();
+        this.displayOpenDeviceOwnerAuth();
 
         if (fileWasClicked) {
             this.focusInput(true);
         }
-    },
+    }
 
-    showOpenLocalFile: function(path, keyFilePath) {
+    showOpenLocalFile(path, keyFilePath) {
         if (this.busy) {
             return;
         }
@@ -527,7 +626,9 @@ const OpenView = Backbone.View.extend({
         this.params.name = path.match(/[^/\\]*$/)[0];
         this.params.rev = null;
         this.params.fileData = null;
+        this.encryptedPassword = null;
         this.displayOpenFile();
+        this.displayOpenDeviceOwnerAuth();
         if (keyFilePath) {
             const parsed = Launcher.parsePath(keyFilePath);
             this.params.keyFileName = parsed.file;
@@ -535,43 +636,29 @@ const OpenView = Backbone.View.extend({
             this.params.keyFileData = null;
             this.displayOpenKeyFile();
         }
-    },
+    }
 
-    openFileWithFingerprint: function(fileInfo) {
-        if (!fileInfo.has('fingerprint')) {
-            return;
-        }
-
-        if (Launcher && Launcher.fingerprints) {
-            Launcher.fingerprints.auth(fileInfo.id, fileInfo.get('fingerprint'), password => {
-                this.inputEl.val(password);
-                this.inputEl.trigger('input');
-                this.openDb();
-            });
-        }
-    },
-
-    createDemo: function() {
+    createDemo() {
         if (!this.busy) {
             this.closeConfig();
             if (!this.model.createDemoFile()) {
-                this.trigger('close');
+                this.emit('close');
             }
-            if (!this.model.settings.get('demoOpened')) {
-                this.model.settings.set('demoOpened', true);
+            if (!this.model.settings.demoOpened) {
+                this.model.settings.demoOpened = true;
             }
         }
-    },
+    }
 
-    createNew: function() {
+    createNew() {
         if (!this.busy) {
             this.model.createNewFile();
         }
-    },
+    }
 
-    openDb: function() {
+    openDb() {
         if (this.params.id && this.model.files.get(this.params.id)) {
-            this.trigger('close');
+            this.emit('close');
             return;
         }
         if (this.busy || !this.params.name) {
@@ -581,13 +668,37 @@ const OpenView = Backbone.View.extend({
         this.inputEl.attr('disabled', 'disabled');
         this.busy = true;
         this.params.password = this.passwordInput.value;
-        this.afterPaint(this.model.openFile.bind(this.model, this.params, this.openDbComplete.bind(this)));
-    },
+        if (this.encryptedPassword && !this.params.password.length) {
+            logger.debug('Encrypting password using hardware decryption');
+            const touchIdPrompt = Locale.bioOpenAuthPrompt.replace('{}', this.params.name);
+            const encryptedPassword = kdbxweb.ProtectedValue.fromBase64(
+                this.encryptedPassword.value
+            );
+            NativeModules.hardwareDecrypt(encryptedPassword, touchIdPrompt)
+                .then((password) => {
+                    this.params.password = password;
+                    this.params.encryptedPassword = this.encryptedPassword;
+                    this.model.openFile(this.params, (err) => this.openDbComplete(err));
+                })
+                .catch((err) => {
+                    if (err.message.includes('User refused')) {
+                        err.userCanceled = true;
+                    }
+                    this.openDbComplete(err);
+                });
+        } else {
+            this.params.encryptedPassword = null;
+            this.afterPaint(() => {
+                this.model.openFile(this.params, (err) => this.openDbComplete(err));
+            });
+        }
+    }
 
-    openDbComplete: function(err) {
+    openDbComplete(err) {
         this.busy = false;
         this.$el.toggleClass('open--opening', false);
-        this.inputEl.removeAttr('disabled').toggleClass('input--error', !!err);
+        const showInputError = err && !err.userCanceled;
+        this.inputEl.removeAttr('disabled').toggleClass('input--error', !!showInputError);
         if (err) {
             logger.error('Error opening file', err);
             this.focusInput(true);
@@ -595,49 +706,54 @@ const OpenView = Backbone.View.extend({
             this.inputEl[0].selectionEnd = this.inputEl.val().length;
             if (err.code === 'InvalidKey') {
                 InputFx.shake(this.inputEl);
+            } else if (err.userCanceled) {
+                // nothing to do
             } else {
                 if (err.notFound) {
                     err = Locale.openErrorFileNotFound;
                 }
                 Alerts.error({
                     header: Locale.openError,
-                    body: Locale.openErrorDescription + '<pre class="modal__pre">' + _.escape(err.toString()) + '</pre>'
+                    body: Locale.openErrorDescription,
+                    pre: this.errorToString(err)
                 });
             }
         } else {
-            this.trigger('close');
+            this.emit('close');
         }
-    },
+    }
 
-    importDbWithXml: function() {
+    importDbWithXml() {
         if (this.busy || !this.params.name) {
             return;
         }
         this.$el.toggleClass('open--opening', true);
         this.inputEl.attr('disabled', 'disabled');
         this.busy = true;
-        this.afterPaint(() => this.model.importFileWithXml(this.params, err => {
-            if (err) {
-                this.params.name = '';
-                this.params.fileXml = null;
-            }
-            this.openDbComplete(err);
-        }));
-    },
+        this.afterPaint(() =>
+            this.model.importFileWithXml(this.params, (err) => {
+                if (err) {
+                    this.params.name = '';
+                    this.params.fileXml = null;
+                }
+                this.openDbComplete(err);
+            })
+        );
+    }
 
-    toggleMore: function() {
+    toggleMore() {
         if (this.busy) {
             return;
         }
         this.closeConfig();
         this.$el.find('.open__icons--lower').toggleClass('hide');
-    },
+    }
 
-    openSettings: function() {
-        Backbone.trigger('toggle-settings');
-    },
+    openSettings() {
+        Events.emit('toggle-settings');
+    }
 
-    openStorage: function(e) {
+    openStorage(e) {
         if (this.busy) {
             return;
         }
@@ -652,9 +768,9 @@ const OpenView = Backbone.View.extend({
         } else {
             Alerts.notImplemented();
         }
-    },
+    }
 
-    listStorage: function(storage, config) {
+    listStorage(storage, config) {
         if (this.busy) {
             return;
         }
@@ -667,10 +783,14 @@ const OpenView = Backbone.View.extend({
             this.busy = false;
             if (err || !files) {
                 err = err ? err.toString() : '';
+                if (err === 'browser-auth-started') {
+                    return;
+                }
                 if (err.lastIndexOf('OAuth', 0) !== 0 && !Alerts.alertDisplayed) {
                     Alerts.error({
                         header: Locale.openError,
-                        body: Locale.openListErrorBody + '<pre class="modal__pre">' + _.escape(err.toString()) + '</pre>'
+                        body: Locale.openListErrorBody,
+                        pre: err.toString()
                     });
                 }
                 return;
@@ -697,18 +817,12 @@ const OpenView = Backbone.View.extend({
                     dir: true
                 });
             }
-            const listView = new StorageFileListView({
-                model: {
-                    files,
-                    showHiddenFiles: config && config.showHiddenFiles
-                }
-            });
-            listView.on('selected', file => {
+            const listView = new StorageFileListView({ files });
+            listView.on('selected', (file) => {
                 if (file.dir) {
                     this.listStorage(storage, {
                         dir: file.path,
-                        prevDir: config && config.dir || '',
-                        showHiddenFiles: true
+                        prevDir: (config && config.dir) || ''
                     });
                 } else {
                     this.openStorageFile(storage, file);
@@ -717,49 +831,55 @@ const OpenView = Backbone.View.extend({
             Alerts.alert({
                 header: Locale.openSelectFile,
                 body: Locale.openSelectFileBody,
-                icon: storage.icon || 'files-o',
-                buttons: [{result: '', title: Locale.alertCancel}],
+                icon: storage.icon || 'file-alt',
+                buttons: [{ result: '', title: Locale.alertCancel }],
                 esc: '',
                 click: '',
                 view: listView
             });
         });
-    },
+    }
 
-    openStorageFile: function(storage, file) {
+    openStorageFile(storage, file) {
         if (this.busy) {
             return;
         }
         this.params.id = null;
         this.params.storage = storage.name;
         this.params.path = file.path;
-        this.params.name = UrlUtil.getDataFileName(file.name);
+        this.params.name = UrlFormat.getDataFileName(file.name);
         this.params.rev = file.rev;
         this.params.fileData = null;
+        this.encryptedPassword = null;
         this.displayOpenFile();
-    },
+        this.displayOpenDeviceOwnerAuth();
+    }
 
-    showConfig: function(storage) {
+    showConfig(storage) {
         if (this.busy) {
             return;
         }
         if (this.views.openConfig) {
             this.views.openConfig.remove();
         }
-        const config = _.extend({
+        const config = {
             id: storage.name,
             name: Locale[storage.name] || storage.name,
             icon: storage.icon,
-            buttons: true
-        }, storage.getOpenConfig());
-        this.views.openConfig = new OpenConfigView({ el: this.$el.find('.open__config-wrap'), model: config }).render();
+            buttons: true,
+            ...storage.getOpenConfig()
+        };
+        this.views.openConfig = new OpenConfigView(config, {
+            parent: '.open__config-wrap'
+        });
         this.views.openConfig.on('cancel', this.closeConfig.bind(this));
         this.views.openConfig.on('apply', this.applyConfig.bind(this));
+        this.views.openConfig.render();
         this.$el.find('.open__pass-area').addClass('hide');
         this.$el.find('.open__icons--lower').addClass('hide');
-    },
+    }
 
-    closeConfig: function() {
+    closeConfig() {
         if (this.busy) {
             this.storageWaitId = null;
             this.busy = false;
@@ -771,9 +891,9 @@ const OpenView = Backbone.View.extend({
         this.$el.find('.open__pass-area').removeClass('hide');
         this.$el.find('.open__config').addClass('hide');
         this.focusInput();
-    },
+    }
 
-    applyConfig: function(config) {
+    applyConfig(config) {
         if (this.busy || !config) {
             return;
         }
@@ -782,21 +902,21 @@ const OpenView = Backbone.View.extend({
         const storage = Storage[config.storage];
         this.storageWaitId = Math.random();
         const path = config.path;
-        const opts = _.omit(config, ['path', 'storage']);
+        const opts = omit(config, ['path', 'storage']);
         const req = {
             waitId: this.storageWaitId,
             storage: config.storage,
-            path: path,
-            opts: opts
+            path,
+            opts
         };
         if (storage.applyConfig) {
             storage.applyConfig(opts, this.storageApplyConfigComplete.bind(this, req));
         } else {
             storage.stat(path, opts, this.storageStatComplete.bind(this, req));
         }
-    },
+    }
 
-    storageApplyConfigComplete: function(req, err) {
+    storageApplyConfigComplete(req, err) {
         if (this.storageWaitId !== req.waitId) {
             return;
         }
@@ -808,9 +928,9 @@ const OpenView = Backbone.View.extend({
         } else {
             this.closeConfig();
         }
-    },
+    }
 
-    storageStatComplete: function(req, err, stat) {
+    storageStatComplete(req, err, stat) {
         if (this.storageWaitId !== req.waitId) {
             return;
         }
@@ -825,17 +945,21 @@ const OpenView = Backbone.View.extend({
             this.params.storage = req.storage;
             this.params.path = req.path;
             this.params.opts = req.opts;
-            this.params.name = UrlUtil.getDataFileName(req.path);
+            this.params.name = UrlFormat.getDataFileName(req.path);
             this.params.rev = stat.rev;
             this.params.fileData = null;
+            this.encryptedPassword = null;
             this.displayOpenFile();
+            this.displayOpenDeviceOwnerAuth();
         }
-    },
+    }
 
-    moveOpenFileSelection: function(steps) {
+    moveOpenFileSelection(steps) {
         const lastOpenFiles = this.getLastOpenFiles();
-        if (this.currentSelectedIndex + steps >= 0 &&
-            this.currentSelectedIndex + steps <= lastOpenFiles.length - 1) {
+        if (
+            this.currentSelectedIndex + steps >= 0 &&
+            this.currentSelectedIndex + steps <= lastOpenFiles.length - 1
+        ) {
             this.currentSelectedIndex = this.currentSelectedIndex + steps;
         }
 
@@ -845,19 +969,178 @@ const OpenView = Backbone.View.extend({
         }
         const fileInfo = this.model.fileInfos.get(lastOpenFiles[this.currentSelectedIndex].id);
         this.showOpenFileInfo(fileInfo);
+    }
 
-        if (fileInfo && Launcher && Launcher.fingerprints) {
-            this.openFileWithFingerprint(fileInfo);
-        }
-    },
-
-    moveOpenFileSelectionDown: function() {
+    moveOpenFileSelectionDown() {
         this.moveOpenFileSelection(1);
-    },
+    }
 
-    moveOpenFileSelectionUp: function() {
+    moveOpenFileSelectionUp() {
         this.moveOpenFileSelection(-1);
     }
-});
 
-module.exports = OpenView;
+    toggleGenerator(e) {
+        e.stopPropagation();
+        if (this.views.gen) {
+            this.views.gen.remove();
+            return;
+        }
+        const el = this.$el.find('.open__icon-generate');
+        const rect = el[0].getBoundingClientRect();
+        const pos = {
+            left: rect.left,
+            top: rect.top
+        };
+        if (Features.isMobile) {
+            pos.left = '50vw';
+            pos.top = '50vh';
+            pos.transform = 'translate(-50%, -50%)';
+        }
+        const generator = new GeneratorView({
+            copy: true,
+            noTemplateEditor: true,
+            pos
+        });
+        generator.render();
+        generator.once('remove', () => {
+            delete this.views.gen;
+        });
+        this.views.gen = generator;
+    }
+
+    userIdle() {
+        this.inputEl.val('');
+        this.passwordInput.reset();
+        this.passwordInput.setElement(this.inputEl);
+    }
+
+    usbDevicesChanged() {
+        if (this.model.settings.canOpenOtpDevice) {
+            const hasYubiKeys = !!UsbListener.attachedYubiKeys;
+
+            const showOpenIcon = hasYubiKeys && this.model.settings.yubiKeyShowIcon;
+            this.$el.find('.open__icon-yubikey').toggleClass('hide', !showOpenIcon);
+
+            const showChallengeResponseIcon =
+                hasYubiKeys && this.model.settings.yubiKeyShowChalResp;
+            this.$el
+                .find('.open__settings-yubikey')
+                .toggleClass('open__settings-yubikey--present', !!showChallengeResponseIcon);
+
+            if (!hasYubiKeys && this.busy && this.otpDevice) {
+                this.otpDevice.cancelOpen();
+            }
+        }
+    }
+
+    openYubiKey() {
+        if (this.busy && this.otpDevice) {
+            this.otpDevice.cancelOpen();
+        }
+        if (!this.busy) {
+            this.busy = true;
+            this.inputEl.attr('disabled', 'disabled');
+            const icon = this.$el.find('.open__icon-yubikey');
+            icon.toggleClass('flip3d', true);
+
+            YubiKey.checkToolStatus().then((status) => {
+                if (status !== 'ok') {
+                    icon.toggleClass('flip3d', false);
+                    this.inputEl.removeAttr('disabled');
+                    this.busy = false;
+                    return Events.emit('toggle-settings', 'devices');
+                }
+                this.otpDevice = this.model.openOtpDevice((err) => {
+                    if (err && !YubiKey.aborted) {
+                        Alerts.error({
+                            header: Locale.openError,
+                            body: Locale.openErrorDescription,
+                            pre: this.errorToString(err)
+                        });
+                    }
+                    this.otpDevice = null;
+                    icon.toggleClass('flip3d', false);
+                    this.inputEl.removeAttr('disabled');
+                    this.busy = false;
+                });
+            });
+        }
+    }
+
+    selectYubiKeyChalResp() {
+        if (this.busy) {
+            return;
+        }
+
+        if (this.params.chalResp) {
+            this.params.chalResp = null;
+            this.el
+                .querySelector('.open__settings-yubikey')
+                .classList.remove('open__settings-yubikey--active');
+            this.focusInput();
+            return;
+        }
+
+        const chalRespView = new OpenChalRespView();
+        chalRespView.on('select', ({ vid, pid, serial, slot }) => {
+            this.params.chalResp = { vid, pid, serial, slot };
+            this.el
+                .querySelector('.open__settings-yubikey')
+                .classList.add('open__settings-yubikey--active');
+            this.focusInput();
+        });
+
+        Alerts.alert({
+            header: Locale.openChalRespHeader,
+            icon: 'usb-token',
+            buttons: [{ result: '', title: Locale.alertCancel }],
+            esc: '',
+            click: '',
+            view: chalRespView
+        });
+    }
+
+    errorToString(err) {
+        const str = err.toString();
+        if (str !== {}.toString()) {
+            return str;
+        }
+        if (err.ykError && err.code) {
+            return Locale.yubiKeyErrorWithCode.replace('{}', err.code);
+        }
+        return undefined;
+    }
+
+    setEncryptedPassword(fileInfo) {
+        this.encryptedPassword = null;
+        if (!fileInfo.id) {
+            return;
+        }
+        switch (this.model.settings.deviceOwnerAuth) {
+            case 'memory':
+                this.encryptedPassword = this.model.getMemoryPassword(fileInfo.id);
+                break;
+            case 'file':
+                this.encryptedPassword = {
+                    value: fileInfo.encryptedPassword,
+                    date: fileInfo.encryptedPasswordDate
+                };
+                break;
+        }
+        this.checkIfEncryptedPasswordDateIsValid();
+    }
+
+    checkIfEncryptedPasswordDateIsValid() {
+        if (this.encryptedPassword) {
+            const maxDate = new Date(this.encryptedPassword.date);
+            maxDate.setMinutes(
+                maxDate.getMinutes() + this.model.settings.deviceOwnerAuthTimeoutMinutes
+            );
+            if (maxDate < new Date()) {
+                this.encryptedPassword = null;
+            }
+        }
+    }
+}
+
+export { OpenView };

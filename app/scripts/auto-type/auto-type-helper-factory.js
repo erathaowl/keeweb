@@ -1,13 +1,19 @@
-const Launcher = require('../comp/launcher');
+import { Launcher } from 'comp/launcher';
+import { AppSettingsModel } from 'models/app-settings-model';
+import { AutoTypeHelper } from 'auto-type/auto-type-helper';
 
 const AutoTypeHelperFactory = {
-    create: function() {
+    create() {
         if (Launcher && Launcher.autoTypeSupported) {
-            const AutoTypeHelper = require('./helper/auto-type-helper-' + Launcher.platform());
+            if (AppSettingsModel.useLegacyAutoType) {
+                const { AutoTypeHelper } = require('./helper/auto-type-helper-' +
+                    Launcher.platform());
+                return new AutoTypeHelper();
+            }
             return new AutoTypeHelper();
         }
         return null;
     }
 };
 
-module.exports = AutoTypeHelperFactory;
+export { AutoTypeHelperFactory };

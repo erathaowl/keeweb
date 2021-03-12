@@ -5,7 +5,7 @@ module.exports = function (grunt) {
         const args = [];
         const win = process.platform === 'win32';
         const prefix = win ? '/' : '-';
-        Object.keys(opt.vars).forEach(key => {
+        Object.keys(opt.vars).forEach((key) => {
             let value = opt.vars[key];
             if (typeof value === 'function') {
                 value = value();
@@ -21,18 +21,21 @@ module.exports = function (grunt) {
         args.push(opt.installScript);
         const executable = win ? 'C:\\Program Files (x86)\\NSIS\\makensis.exe' : 'makensis';
         grunt.log.writeln('Running NSIS:', args.join(' '));
-        grunt.util.spawn({
-            cmd: executable,
-            args: args,
-            opts: {stdio: 'inherit'}
-        }, (error, result, code) => {
-            if (error) {
-                return grunt.warn('NSIS error: ' + error);
+        grunt.util.spawn(
+            {
+                cmd: executable,
+                args,
+                opts: { stdio: 'inherit' }
+            },
+            (error, result, code) => {
+                if (error) {
+                    return grunt.warn('NSIS error: ' + error);
+                }
+                if (code) {
+                    return grunt.warn('NSIS exit code ' + code);
+                }
+                done();
             }
-            if (code) {
-                return grunt.warn('NSIS exit code ' + code);
-            }
-            done();
-        });
+        );
     });
 };

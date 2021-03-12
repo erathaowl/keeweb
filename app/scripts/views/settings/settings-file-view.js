@@ -1,29 +1,37 @@
-const Backbone = require('backbone');
-const OpenConfigView = require('../open-config-view');
-const FeatureDetector = require('../../util/feature-detector');
-const PasswordGenerator = require('../../util/password-generator');
-const Alerts = require('../../comp/alerts');
-const Launcher = require('../../comp/launcher');
-const Storage = require('../../storage');
-const Links = require('../../const/links');
-const Format = require('../../util/format');
-const Locale = require('../../util/locale');
-const UrlUtil = require('../../util/url-util');
-const FileSaver = require('../../util/file-saver');
-const kdbxweb = require('kdbxweb');
+import kdbxweb from 'kdbxweb';
+import { View } from 'framework/views/view';
+import { Storage } from 'storage';
+import { Shortcuts } from 'comp/app/shortcuts';
+import { Launcher } from 'comp/launcher';
+import { Alerts } from 'comp/ui/alerts';
+import { YubiKey } from 'comp/app/yubikey';
+import { UsbListener } from 'comp/app/usb-listener';
+import { Links } from 'const/links';
+import { AppSettingsModel } from 'models/app-settings-model';
+import { DateFormat } from 'comp/i18n/date-format';
+import { UrlFormat } from 'util/formatting/url-format';
+import { PasswordPresenter } from 'util/formatting/password-presenter';
+import { Locale } from 'util/locale';
+import { Features } from 'util/features';
+import { FileSaver } from 'util/ui/file-saver';
+import { OpenConfigView } from 'views/open-config-view';
+import { omit } from 'util/fn';
+import template from 'templates/settings/settings-file.hbs';
 
 const DefaultBackupPath = 'Backups/{name}.{date}.bak';
 const DefaultBackupSchedule = '1w';
 
-const SettingsFileView = Backbone.View.extend({
-    template: require('templates/settings/settings-file.hbs'),
+class SettingsFileView extends View {
+    template = template;
+    yubiKeys = [];
 
-    events: {
+    events = {
         'click .settings__file-button-save-default': 'saveDefault',
         'click .settings__file-button-save-choose': 'toggleChooser',
         'click .settings__file-button-close': 'closeFile',
         'click .settings__file-save-to-file': 'saveToFile',
         'click .settings__file-save-to-xml': 'saveToXml',
+        'click .settings__file-save-to-html': 'saveToHtml',
         'click .settings__file-save-to-storage': 'saveToStorage',
         'change #settings__file-key-file': 'keyFileChange',
         'click #settings__file-file-select-link': 'triggerSelectFile',
@@ -41,84 +49,149 @@ const SettingsFileView = Backbone.View.extend({
         'change #settings__file-backup-schedule': 'changeBackupSchedule',
         'click .settings__file-button-backup': 'backupFile',
         'change #settings__file-trash': 'changeTrash',
+        'change #settings__file-hist-type': 'changeHistoryMode',
         'input #settings__file-hist-len': 'changeHistoryLength',
         'input #settings__file-hist-size': 'changeHistorySize',
+        'change #settings__file-format-version': 'changeFormatVersion',
+        'change #settings__file-kdf': 'changeKdf',
         'input #settings__file-key-rounds': 'changeKeyRounds',
         'input #settings__file-key-change-force': 'changeKeyChangeForce',
-        'input .settings__input-kdf': 'changeKdfParameter'
-    },
+        'input .settings__input-kdf': 'changeKdfParameter',
+        'change #settings__file-yubikey': 'changeYubiKey'
+    };
 
-    appModel: null,
+    constructor(model, options) {
+        super(model, options);
+        const watchedProps = ['syncing', 'syncError', 'syncDate'];
+        for (const prop of watchedProps) {
+            this.listenTo(this.model, 'change:' + prop, () => {
+                setTimeout(() => this.render(), 0);
+            });
+        }
 
-    initialize: function() {
-        this.listenTo(this.model, 'change:syncing change:syncError change:syncDate', this.deferRender);
-    },
+        this.refreshYubiKeys(false);
+    }
 
-    render: function() {
+    render() {
         const storageProviders = [];
-        const fileStorage = this.model.get('storage');
+        const fileStorage = this.model.storage;
         let canBackup = false;
-        Object.keys(Storage).forEach(name => {
+        Object.keys(Storage).forEach((name) => {
             const prv = Storage[name];
             if (!canBackup && prv.backup && prv.enabled) {
                 canBackup = true;
             }
             if (!prv.system && prv.enabled) {
                 storageProviders.push({
-                    name: prv.name, icon: prv.icon, iconSvg: prv.iconSvg, own: name === fileStorage, backup: prv.backup
+                    name: prv.name,
+                    icon: prv.icon,
+                    own: name === fileStorage,
+                    backup: prv.backup
                 });
             }
         });
         storageProviders.sort((x, y) => (x.uipos || Infinity) - (y.uipos || Infinity));
-        const backup = this.model.get('backup');
-        this.renderTemplate({
-            cmd: FeatureDetector.actionShortcutSymbol(true),
+        const backup = this.model.backup;
+
+        const selectedYubiKey = this.model.chalResp
+            ? `${this.model.chalResp.serial}:${this.model.chalResp.slot}`
+            : '';
+        const showYubiKeyBlock =
+            !!this.model.chalResp ||
+            (Launcher && AppSettingsModel.enableUsb && AppSettingsModel.yubiKeyShowChalResp);
+        const yubiKeys = [];
+        if (showYubiKeyBlock) {
+            for (const yk of this.yubiKeys) {
+                for (const slot of yk.slots.filter((s) => s.valid)) {
+                    yubiKeys.push({
+                        value: `${yk.serial}:${slot.number}`,
+                        fullName: yk.fullName,
+                        vid: yk.vid,
+                        pid: yk.pid,
+                        serial: yk.serial,
+                        slot: slot.number
+                    });
+                }
+            }
+            if (selectedYubiKey && !yubiKeys.some((yk) => yk.value === selectedYubiKey)) {
+                yubiKeys.push({
+                    value: selectedYubiKey,
+                    fullName: `YubiKey ${this.model.chalResp.serial}`,
+                    vid: this.model.chalResp.vid,
+                    pid: this.model.chalResp.pid,
+                    serial: this.model.chalResp.serial,
+                    slot: this.model.chalResp.slot
+                });
+            }
+        }
+
+        super.render({
+            cmd: Shortcuts.actionShortcutSymbol(true),
             supportFiles: !!Launcher,
             desktopLink: Links.Desktop,
-            name: this.model.get('name'),
-            path: this.model.get('path'),
-            storage: this.model.get('storage'),
-            syncing: this.model.get('syncing'),
-            syncError: this.model.get('syncError'),
-            syncDate: Format.dtStr(this.model.get('syncDate')),
-            password: PasswordGenerator.present(this.model.get('passwordLength')),
-            defaultUser: this.model.get('defaultUser'),
-            recycleBinEnabled: this.model.get('recycleBinEnabled'),
+            name: this.model.name,
+            path: this.model.path,
+            storage: this.model.storage,
+            syncing: this.model.syncing,
+            syncError: this.model.syncError,
+            syncDate: DateFormat.dtStr(this.model.syncDate),
+            password: PasswordPresenter.present(this.model.passwordLength),
+            defaultUser: this.model.defaultUser,
+            recycleBinEnabled: this.model.recycleBinEnabled,
             backupEnabled: backup && backup.enabled,
             backupStorage: backup && backup.storage,
-            backupPath: backup && backup.path || DefaultBackupPath.replace('{name}', this.model.get('name')),
+            backupPath:
+                (backup && backup.path) || DefaultBackupPath.replace('{name}', this.model.name),
             backupSchedule: backup ? backup.schedule : DefaultBackupSchedule,
-            historyMaxItems: this.model.get('historyMaxItems'),
-            historyMaxSize: Math.round(this.model.get('historyMaxSize') / 1024 / 1024),
-            keyEncryptionRounds: this.model.get('keyEncryptionRounds'),
-            keyChangeForce: this.model.get('keyChangeForce') > 0 ? this.model.get('keyChangeForce') : null,
-            kdfParameters: this.kdfParametersToUi(this.model.get('kdfParameters')),
-            storageProviders: storageProviders,
-            canBackup: canBackup
+            historyMaxItems: this.model.historyMaxItems,
+            historyMaxSize: Math.round(this.model.historyMaxSize / 1024 / 1024),
+            formatVersion: this.model.formatVersion,
+            kdfName: this.model.kdfName,
+            isArgon2Kdf: this.model.kdfName.startsWith('Argon2'),
+            keyEncryptionRounds: this.model.keyEncryptionRounds,
+            keyChangeForce: this.model.keyChangeForce > 0 ? this.model.keyChangeForce : null,
+            kdfParameters: this.kdfParametersToUi(this.model.kdfParameters),
+            storageProviders,
+            canBackup,
+            canSaveTo: AppSettingsModel.canSaveTo,
+            canExportXml: AppSettingsModel.canExportXml,
+            canExportHtml: AppSettingsModel.canExportHtml,
+            showYubiKeyBlock,
+            selectedYubiKey,
+            yubiKeys
         });
-        if (!this.model.get('created')) {
-            this.$el.find('.settings__file-master-pass-warning').toggle(this.model.get('passwordChanged'));
-            this.$el.find('#settings__file-master-pass-warning-text').text(Locale.setFilePassChanged);
+        if (!this.model.created) {
+            this.$el.find('.settings__file-master-pass-warning').toggle(this.model.passwordChanged);
+            this.$el
+                .find('#settings__file-master-pass-warning-text')
+                .text(Locale.setFilePassChanged);
         }
         this.renderKeyFileSelect();
-    },
+    }
 
-    kdfParametersToUi: function(kdfParameters) {
-        return kdfParameters ? _.extend({}, kdfParameters, { memory: Math.round(kdfParameters.memory / 1024) }) : null;
-    },
+    kdfParametersToUi(kdfParameters) {
+        return kdfParameters
+            ? { ...kdfParameters, memory: Math.round(kdfParameters.memory / 1024) }
+            : null;
+    }
 
-    renderKeyFileSelect: function() {
-        const keyFileName = this.model.get('keyFileName');
-        const oldKeyFileName = this.model.get('oldKeyFileName');
-        const keyFileChanged = this.model.get('keyFileChanged');
+    renderKeyFileSelect() {
+        const keyFileName = this.model.keyFileName;
+        const oldKeyFileName = this.model.oldKeyFileName;
+        const keyFileChanged = this.model.keyFileChanged;
         const sel = this.$el.find('#settings__file-key-file');
-        sel.html('');
+        sel.empty();
         if (keyFileName && keyFileChanged) {
-            const text = keyFileName !== 'Generated' ? Locale.setFileUseKeyFile + ' ' + keyFileName : Locale.setFileUseGenKeyFile;
+            const text =
+                keyFileName !== 'Generated'
+                    ? Locale.setFileUseKeyFile + ' ' + keyFileName
+                    : Locale.setFileUseGenKeyFile;
             $('<option/>').val('ex').text(text).appendTo(sel);
         }
         if (oldKeyFileName) {
-            const useText = keyFileChanged ? Locale.setFileUseOldKeyFile : Locale.setFileUseKeyFile + ' ' + oldKeyFileName;
+            const useText = keyFileChanged
+                ? Locale.setFileUseOldKeyFile
+                : Locale.setFileUseKeyFile + ' ' + oldKeyFileName;
             $('<option/>').val('old').text(useText).appendTo(sel);
         }
         $('<option/>').val('gen').text(Locale.setFileGenKeyFile).appendTo(sel);
@@ -130,10 +203,10 @@ const SettingsFileView = Backbone.View.extend({
         } else if (oldKeyFileName && keyFileName === oldKeyFileName && !keyFileChanged) {
             sel.val('old');
         }
-    },
+    }
 
-    validatePassword: function(continueCallback) {
-        if (!this.model.get('passwordLength')) {
+    validatePassword(continueCallback) {
+        if (!this.model.passwordLength) {
             Alerts.yesno({
                 header: Locale.setFileEmptyPass,
                 body: Locale.setFileEmptyPassBody,
@@ -147,9 +220,9 @@ const SettingsFileView = Backbone.View.extend({
             return false;
         }
         return true;
-    },
+    }
 
-    save: function(arg) {
+    save(arg) {
         if (!arg) {
             arg = {};
         }
@@ -165,62 +238,82 @@ const SettingsFileView = Backbone.View.extend({
         }
 
         this.appModel.syncFile(this.model, arg);
-    },
+    }
 
-    saveDefault: function() {
+    saveDefault() {
         this.save();
-    },
+    }
 
-    toggleChooser: function() {
+    toggleChooser() {
         this.$el.find('.settings__file-save-choose').toggleClass('hide');
-    },
+    }
 
-    saveToFile: function(skipValidation) {
+    saveToFile(skipValidation) {
         if (skipValidation !== true && !this.validatePassword(this.saveToFile.bind(this, true))) {
             return;
         }
-        const fileName = this.model.get('name') + '.kdbx';
-        if (Launcher && !this.model.get('storage')) {
-            Launcher.getSaveFileName(fileName, path => {
+        const fileName = this.model.name + '.kdbx';
+        if (Launcher && !this.model.storage) {
+            Launcher.getSaveFileName(fileName, (path) => {
                 if (path) {
-                    this.save({storage: 'file', path: path});
+                    this.save({ storage: 'file', path });
                 }
             });
         } else {
-            this.model.getData(data => {
+            this.model.getData((data) => {
                 if (!data) {
                     return;
                 }
                 if (Launcher) {
-                    Launcher.getSaveFileName(fileName, path => {
+                    Launcher.getSaveFileName(fileName, (path) => {
                         if (path) {
-                            Storage.file.save(path, null, data, err => {
+                            Storage.file.save(path, null, data, (err) => {
                                 if (err) {
                                     Alerts.error({
                                         header: Locale.setFileSaveError,
-                                        body: Locale.setFileSaveErrorBody + ' ' + path + ': \n' + err
+                                        body: Locale.setFileSaveErrorBody + ' ' + path + ':',
+                                        pre: err
                                     });
                                 }
                             });
                         }
                     });
                 } else {
-                    const blob = new Blob([data], {type: 'application/octet-stream'});
+                    const blob = new Blob([data], { type: 'application/octet-stream' });
                     FileSaver.saveAs(blob, fileName);
                 }
             });
         }
-    },
+    }
 
-    saveToXml: function() {
-        this.model.getXml(xml => {
-            const blob = new Blob([xml], {type: 'text/xml'});
-            FileSaver.saveAs(blob, this.model.get('name') + '.xml');
+    saveToXml() {
+        Alerts.yesno({
+            header: Locale.setFileExportRaw,
+            body: Locale.setFileExportRawBody,
+            success: () => {
+                this.model.getXml((xml) => {
+                    const blob = new Blob([xml], { type: 'text/xml' });
+                    FileSaver.saveAs(blob, this.model.name + '.xml');
+                });
+            }
         });
-    },
+    }
 
-    saveToStorage: function(e) {
-        if (this.model.get('syncing') || this.model.get('demo')) {
+    saveToHtml() {
+        Alerts.yesno({
+            header: Locale.setFileExportRaw,
+            body: Locale.setFileExportRawBody,
+            success: () => {
+                this.model.getHtml((html) => {
+                    const blob = new Blob([html], { type: 'text/html' });
+                    FileSaver.saveAs(blob, this.model.name + '.html');
+                });
+            }
+        });
+    }
+
+    saveToStorage(e) {
+        if (this.model.syncing || this.model.demo) {
             return;
         }
         const storageName = $(e.target).closest('.settings__file-save-to-storage').data('storage');
@@ -228,22 +321,23 @@ const SettingsFileView = Backbone.View.extend({
         if (!storage) {
             return;
         }
-        if (this.model.get('storage') === storageName) {
+        if (this.model.storage === storageName) {
             this.save();
         } else {
             if (!storage.list) {
                 if (storage.getOpenConfig) {
-                    const config = _.extend({
+                    const config = {
                         id: storage.name,
                         name: Locale[storage.name] || storage.name,
                         icon: storage.icon,
-                        buttons: false
-                    }, storage.getOpenConfig());
-                    const openConfigView = new OpenConfigView({ model: config });
+                        buttons: false,
+                        ...storage.getOpenConfig()
+                    };
+                    const openConfigView = new OpenConfigView(config);
                     Alerts.alert({
                         header: '',
                         body: '',
-                        icon: storage.icon || 'files-o',
+                        icon: storage.icon || 'file-alt',
                         buttons: [Alerts.buttons.ok, Alerts.buttons.cancel],
                         esc: '',
                         opaque: true,
@@ -253,9 +347,9 @@ const SettingsFileView = Backbone.View.extend({
                             if (!storageConfig) {
                                 return;
                             }
-                            const opts = _.omit(storageConfig, ['path', 'storage']);
+                            const opts = omit(storageConfig, ['path', 'storage']);
                             if (opts && Object.keys(opts).length) {
-                                this.model.set('opts', opts);
+                                this.model.opts = opts;
                             }
                             this.save({ storage: storageName, path: storageConfig.path, opts });
                         }
@@ -265,47 +359,48 @@ const SettingsFileView = Backbone.View.extend({
                 }
                 return;
             }
-            this.model.set('syncing', true);
+            this.model.syncing = true;
             storage.list('', (err, files) => {
-                this.model.set('syncing', false);
+                this.model.syncing = false;
                 if (err) {
                     return;
                 }
-                const expName = this.model.get('name').toLowerCase();
-                const existingFile = _.find(files, file => {
-                    return !file.dir && UrlUtil.getDataFileName(file.name).toLowerCase() === expName;
-                });
+                const expName = this.model.name.toLowerCase();
+                const existingFile = [...files].find(
+                    (file) =>
+                        !file.dir && UrlFormat.getDataFileName(file.name).toLowerCase() === expName
+                );
                 if (existingFile) {
                     Alerts.yesno({
                         header: Locale.setFileAlreadyExists,
-                        body: Locale.setFileAlreadyExistsBody.replace('{}', this.model.escape('name')),
+                        body: Locale.setFileAlreadyExistsBody.replace('{}', this.model.name),
                         success: () => {
-                            this.model.set('syncing', true);
-                            storage.remove(existingFile.path, err => {
-                                this.model.set('syncing', false);
+                            this.model.syncing = true;
+                            storage.remove(existingFile.path, (err) => {
+                                this.model.syncing = false;
                                 if (!err) {
-                                    this.save({storage: storageName});
+                                    this.save({ storage: storageName });
                                 }
                             });
                         }
                     });
                 } else {
-                    this.save({storage: storageName});
+                    this.save({ storage: storageName });
                 }
             });
         }
-    },
+    }
 
-    closeFile: function() {
-        if (this.model.get('modified')) {
+    closeFile() {
+        if (this.model.modified) {
             Alerts.yesno({
                 header: Locale.setFileUnsaved,
                 body: Locale.setFileUnsavedBody,
                 buttons: [
-                    {result: 'close', title: Locale.setFileCloseNoSave, error: true},
-                    {result: '', title: Locale.setFileDontClose}
+                    { result: 'close', title: Locale.setFileCloseNoSave, error: true },
+                    { result: '', title: Locale.setFileDontClose }
                 ],
-                success: result => {
+                success: (result) => {
                     if (result === 'close') {
                         this.closeFileNoCheck();
                     }
@@ -314,13 +409,13 @@ const SettingsFileView = Backbone.View.extend({
         } else {
             this.closeFileNoCheck();
         }
-    },
+    }
 
-    closeFileNoCheck: function() {
+    closeFileNoCheck() {
         this.appModel.closeFile(this.model);
-    },
+    }
 
-    keyFileChange: function(e) {
+    keyFileChange(e) {
         switch (e.target.value) {
             case 'old':
                 this.selectOldKeyFile();
@@ -332,114 +427,121 @@ const SettingsFileView = Backbone.View.extend({
                 this.clearKeyFile();
                 break;
         }
-    },
+    }
 
-    selectOldKeyFile: function() {
+    selectOldKeyFile() {
         this.model.resetKeyFile();
         this.renderKeyFileSelect();
-    },
+    }
 
-    generateKeyFile: function() {
-        const keyFile = this.model.generateAndSetKeyFile();
-        const blob = new Blob([keyFile], {type: 'application/octet-stream'});
-        FileSaver.saveAs(blob, this.model.get('name') + '.key');
-        this.renderKeyFileSelect();
-    },
+    generateKeyFile() {
+        this.model.generateAndSetKeyFile().then((keyFile) => {
+            const blob = new Blob([keyFile], { type: 'application/octet-stream' });
+            FileSaver.saveAs(blob, this.model.name + '.key');
+            this.renderKeyFileSelect();
+        });
+    }
 
-    clearKeyFile: function() {
+    clearKeyFile() {
         this.model.removeKeyFile();
         this.renderKeyFileSelect();
-    },
+    }
 
-    triggerSelectFile: function() {
+    triggerSelectFile() {
         this.$el.find('#settings__file-file-select').click();
-    },
+    }
 
-    fileSelected: function(e) {
+    fileSelected(e) {
         const file = e.target.files[0];
         const reader = new FileReader();
-        reader.onload = e => {
+        reader.onload = (e) => {
             const res = e.target.result;
             this.model.setKeyFile(res, file.name);
             this.renderKeyFileSelect();
         };
         reader.readAsArrayBuffer(file);
-    },
+    }
 
-    focusMasterPass: function(e) {
+    focusMasterPass(e) {
         e.target.value = '';
         e.target.setAttribute('type', 'text');
-        this.model.set('passwordChanged', false);
-    },
+        this.model.passwordChanged = false;
+    }
 
-    changeMasterPass: function(e) {
+    changeMasterPass(e) {
         if (!e.target.value) {
             this.model.resetPassword();
             this.$el.find('.settings__file-master-pass-warning').hide();
         } else {
             this.$el.find('#settings__file-confirm-master-pass-group').show();
-            this.$el.find('#settings__file-master-pass-warning-text').text(Locale.setFilePassChange);
-            if (!this.model.get('created')) {
+            this.$el
+                .find('#settings__file-master-pass-warning-text')
+                .text(Locale.setFilePassChange);
+            if (!this.model.created) {
                 this.$el.find('.settings__file-master-pass-warning').show();
             }
         }
-    },
+    }
 
-    blurMasterPass: function(e) {
+    blurMasterPass(e) {
         if (!e.target.value) {
             this.model.resetPassword();
             this.resetConfirmMasterPass();
-            e.target.value = PasswordGenerator.present(this.model.get('passwordLength'));
+            e.target.value = PasswordPresenter.present(this.model.passwordLength);
             this.$el.find('.settings__file-master-pass-warning').hide();
         }
         e.target.setAttribute('type', 'password');
-    },
+    }
 
-    resetConfirmMasterPass: function() {
+    resetConfirmMasterPass() {
         this.$el.find('#settings__file-confirm-master-pass').val('');
         this.$el.find('#settings__file-confirm-master-pass-group').hide();
         this.$el.find('#settings__file-master-pass-warning-text').text(Locale.setFilePassChange);
-    },
+    }
 
-    focusConfirmMasterPass: function(e) {
+    focusConfirmMasterPass(e) {
         e.target.value = '';
         e.target.setAttribute('type', 'text');
-    },
+    }
 
-    blurConfirmMasterPass: function(e) {
+    blurConfirmMasterPass(e) {
         e.target.setAttribute('type', 'password');
         const masterPassword = this.$el.find('#settings__file-master-pass').val();
         const confirmPassword = e.target.value;
         if (masterPassword === confirmPassword) {
-            this.$el.find('#settings__file-master-pass-warning-text').text(Locale.setFilePassChanged);
+            this.$el
+                .find('#settings__file-master-pass-warning-text')
+                .text(Locale.setFilePassChanged);
             this.$el.find('.settings__file-confirm-master-pass-warning').hide();
             this.model.setPassword(kdbxweb.ProtectedValue.fromString(confirmPassword));
         } else {
-            this.$el.find('#settings__file-master-pass-warning-text').text(Locale.setFilePassChange);
+            this.$el
+                .find('#settings__file-master-pass-warning-text')
+                .text(Locale.setFilePassChange);
             this.$el.find('.settings__file-confirm-master-pass-warning').show();
             this.model.resetPassword();
         }
-    },
+    }
 
-    changeName: function(e) {
+    changeName(e) {
         const value = $.trim(e.target.value);
         if (!value) {
             return;
         }
         this.model.setName(value);
-    },
+    }
 
-    changeDefUser: function(e) {
+    changeDefUser(e) {
         const value = $.trim(e.target.value);
         this.model.setDefaultUser(value);
-    },
+    }
 
-    changeBackupEnabled: function(e) {
+    changeBackupEnabled(e) {
         const enabled = e.target.checked;
-        let backup = this.model.get('backup');
+        let backup = this.model.backup;
         if (!backup) {
-            backup = { enabled: enabled, schedule: DefaultBackupSchedule };
-            const defaultPath = DefaultBackupPath.replace('{name}', this.model.get('name'));
+            backup = { enabled, schedule: DefaultBackupSchedule };
+            const defaultPath = DefaultBackupPath.replace('{name}', this.model.name);
             if (Launcher) {
                 backup.storage = 'file';
                 backup.path = Launcher.getDocumentsPath(defaultPath);
@@ -447,12 +549,12 @@ const SettingsFileView = Backbone.View.extend({
                 backup.storage = 'dropbox';
                 backup.path = defaultPath;
             }
-            // } else if (this.model.get('storage') === 'webdav') {
+            // } else if (this.model.storage === 'webdav') {
             //     backup.storage = 'webdav';
-            //     backup.path = this.model.get('path') + '.{date}.bak';
-            // } else if (this.model.get('storage')) {
-            //     backup.storage = this.model.get('storage');
-            //     backup.path = DefaultBackupPath.replace('{name}', this.model.get('name'));
+            //     backup.path = this.model.path + '.{date}.bak';
+            // } else if (this.model.storage) {
+            //     backup.storage = this.model.storage;
+            //     backup.path = DefaultBackupPath.replace('{name}', this.model.name);
             // } else {
             //     Object.keys(Storage).forEach(name => {
             //         var prv = Storage[name];
@@ -464,7 +566,7 @@ const SettingsFileView = Backbone.View.extend({
             //         e.target.checked = false;
             //         return;
             //     }
-            //     backup.path = DefaultBackupPath.replace('{name}', this.model.get('name'));
+            //     backup.path = DefaultBackupPath.replace('{name}', this.model.name);
             // }
             this.$el.find('#settings__file-backup-storage').val(backup.storage);
             this.$el.find('#settings__file-backup-path').val(backup.path);
@@ -472,38 +574,38 @@ const SettingsFileView = Backbone.View.extend({
         this.$el.find('.settings__file-backups').toggleClass('hide', !enabled);
         backup.enabled = enabled;
         this.setBackup(backup);
-    },
+    }
 
-    changeBackupPath: function(e) {
-        const backup = this.model.get('backup');
+    changeBackupPath(e) {
+        const backup = this.model.backup;
         backup.path = e.target.value.trim();
         this.setBackup(backup);
-    },
+    }
 
-    changeBackupStorage: function(e) {
-        const backup = this.model.get('backup');
+    changeBackupStorage(e) {
+        const backup = this.model.backup;
         backup.storage = e.target.value;
         this.setBackup(backup);
-    },
+    }
 
-    changeBackupSchedule: function(e) {
-        const backup = this.model.get('backup');
+    changeBackupSchedule(e) {
+        const backup = this.model.backup;
         backup.schedule = e.target.value;
         this.setBackup(backup);
-    },
+    }
 
-    setBackup: function(backup) {
-        this.model.set('backup', backup);
+    setBackup(backup) {
+        this.model.backup = backup;
         this.appModel.setFileBackup(this.model.id, backup);
-    },
+    }
 
-    backupFile: function() {
+    backupFile() {
         if (this.backupInProgress) {
             return;
         }
         const backupButton = this.$el.find('.settings__file-button-backup');
         backupButton.text(Locale.setFileBackupNowWorking);
-        this.model.getData(data => {
+        this.model.getData((data) => {
             if (!data) {
                 this.backupInProgress = false;
                 backupButton.text(Locale.setFileBackupNow);
@@ -523,58 +625,76 @@ const SettingsFileView = Backbone.View.extend({
                         description = Locale.setFileBackupErrorDescription;
                     }
                     Alerts.error({
-                        title: title,
-                        body: description +
-                            '<pre class="modal__pre">' +
-                            _.escape(err.toString()) +
-                            '</pre>'
+                        title,
+                        body: description,
+                        pre: err.toString()
                     });
                 }
             });
         });
-    },
+    }
 
-    changeTrash: function(e) {
+    changeTrash(e) {
         this.model.setRecycleBinEnabled(e.target.checked);
-    },
+    }
 
-    changeHistoryLength: function(e) {
+    changeHistoryLength(e) {
         if (!e.target.validity.valid) {
             return;
         }
         const value = +e.target.value;
         if (isNaN(value)) {
-            e.target.value = this.model.get('historyMaxItems');
+            e.target.value = this.model.historyMaxItems;
             return;
         }
         this.model.setHistoryMaxItems(value);
-    },
+    }
 
-    changeHistorySize: function(e) {
+    changeHistoryMode(e) {
+        let value = +e.target.value;
+        if (value > 0) {
+            value = 10;
+        }
+        this.model.setHistoryMaxItems(value);
+        this.render();
+    }
+
+    changeHistorySize(e) {
         if (!e.target.validity.valid) {
             return;
         }
         const value = +e.target.value;
         if (isNaN(value)) {
-            e.target.value = this.model.get('historyMaxSize') / 1024 / 1024;
+            e.target.value = this.model.historyMaxSize / 1024 / 1024;
             return;
         }
         this.model.setHistoryMaxSize(value * 1024 * 1024);
-    },
+    }
 
-    changeKeyRounds: function(e) {
+    changeFormatVersion(e) {
+        const version = +e.target.value;
+        this.model.setFormatVersion(version);
+        this.render();
+    }
+
+    changeKdf(e) {
+        this.model.setKdf(e.target.value);
+        this.render();
+    }
+
+    changeKeyRounds(e) {
         if (!e.target.validity.valid) {
             return;
         }
         const value = +e.target.value;
         if (isNaN(value)) {
-            e.target.value = this.model.get('keyEncryptionRounds');
+            e.target.value = this.model.keyEncryptionRounds;
             return;
         }
         this.model.setKeyEncryptionRounds(value);
-    },
+    }
 
-    changeKeyChangeForce: function(e) {
+    changeKeyChangeForce(e) {
         if (!e.target.validity.valid) {
             return;
         }
@@ -583,9 +703,9 @@ const SettingsFileView = Backbone.View.extend({
             value = -1;
         }
         this.model.setKeyChange(true, value);
-    },
+    }
 
-    changeKdfParameter: function(e) {
+    changeKdfParameter(e) {
         if (!e.target.validity.valid) {
             return;
         }
@@ -593,13 +713,70 @@ const SettingsFileView = Backbone.View.extend({
         const mul = $(e.target).data('mul') || 1;
         const value = e.target.value * mul;
         if (isNaN(value)) {
-            e.target.value = Math.round(this.model.get('kdfParameters')[field] / mul);
+            e.target.value = Math.round(this.model.kdfParameters[field] / mul);
             return;
         }
         if (value > 0) {
             this.model.setKdfParameter(field, value);
         }
     }
-});
 
-module.exports = SettingsFileView;
+    refreshYubiKeys(userInitiated) {
+        if (!Launcher || !AppSettingsModel.enableUsb || !AppSettingsModel.yubiKeyShowChalResp) {
+            return;
+        }
+        if (!UsbListener.attachedYubiKeys) {
+            if (this.yubiKeys.length) {
+                this.yubiKeys = [];
+                this.render();
+            }
+        }
+        YubiKey.list((err, yubiKeys) => {
+            if (err || this.removed) {
+                return;
+            }
+            this.yubiKeys = yubiKeys;
+            this.render();
+            if (
+                userInitiated &&
+                UsbListener.attachedYubiKeys &&
+                !yubiKeys.length &&
+                Features.isMac
+            ) {
+                Alerts.error({
+                    body: Locale.setFileYubiKeyErrorEmptyMac
+                });
+            }
+        });
+    }
+
+    changeYubiKey(e) {
+        let chalResp = null;
+        const value = e.target.value;
+        if (value === 'refresh') {
+            this.render();
+            this.refreshYubiKeys(true);
+            return;
+        }
+        if (value) {
+            const option = e.target.selectedOptions[0];
+            const vid = +option.dataset.vid;
+            const pid = +option.dataset.pid;
+            const serial = +option.dataset.serial;
+            const slot = +option.dataset.slot;
+            chalResp = { vid, pid, serial, slot };
+        }
+        Alerts.yesno({
+            header: Locale.setFileYubiKeyHeader,
+            body: Locale.setFileYubiKeyBody,
+            success: () => {
+                this.model.setChallengeResponse(chalResp);
+            },
+            cancel: () => {
+                this.render();
+            }
+        });
+    }
+}
+
+export { SettingsFileView };

@@ -1,19 +1,26 @@
 const Links = {
+    Homepage: 'https://keeweb.info',
     Repo: 'https://github.com/keeweb/keeweb',
     Desktop: 'https://github.com/keeweb/keeweb/releases/latest',
     WebApp: 'https://app.keeweb.info',
     BetaWebApp: 'https://beta.keeweb.info',
     License: 'https://github.com/keeweb/keeweb/blob/master/LICENSE',
     LicenseApache: 'https://opensource.org/licenses/Apache-2.0',
-    UpdateDesktop: 'https://github.com/keeweb/keeweb/releases/download/v{ver}/UpdateDesktop.zip',
+    LicenseLinkCCBY40: 'https://creativecommons.org/licenses/by/4.0/',
+    UpdateBasePath: 'https://github.com/keeweb/keeweb/releases/download/v{ver}/',
     ReleaseNotes: 'https://github.com/keeweb/keeweb/blob/master/release-notes.md#release-notes',
     SelfHostedDropbox: 'https://github.com/keeweb/keeweb#self-hosting',
-    Manifest: 'https://app.keeweb.info/manifest.appcache',
+    UpdateJson: 'https://app.keeweb.info/update.json',
     AutoType: 'https://github.com/keeweb/keeweb/wiki/Auto-Type',
+    AutoTypeMacOS: 'https://github.com/keeweb/keeweb/wiki/Auto-Type#macos',
     Translation: 'https://keeweb.oneskyapp.com/',
-    Donation: 'https://www.paypal.me/dvitkovsky',
+    Donation: 'https://opencollective.com/keeweb#support',
     Plugins: 'https://plugins.keeweb.info',
-    PluginDevelopStart: 'https://github.com/keeweb/keeweb/wiki/Plugins'
+    PluginDevelopStart: 'https://github.com/keeweb/keeweb/wiki/Plugins',
+    YubiKeyManual: 'https://github.com/keeweb/keeweb/wiki/YubiKey',
+    YubiKeyManagerInstall: 'https://github.com/Yubico/yubikey-manager#installation',
+    HaveIBeenPwned: 'https://haveibeenpwned.com',
+    HaveIBeenPwnedPrivacy: 'https://haveibeenpwned.com/Passwords'
 };
 
-module.exports = Links;
+export { Links };

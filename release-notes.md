@@ -1,5 +1,349 @@
 Release notes
 -------------
+##### v1.17.1 (2021-03-10)
+`-` fix #1735: issue with auto-typing some characters on Windows  
+
+##### v1.17.0 (2021-03-07)
+`+` opening files with Touch ID on macOS (opt-in)  
+`+` password quality warnings  
+`+` "Have I Been Pwned" service integration (opt-in)  
+`+` automatically switching between dark and light theme  
+`+` custom title bar on Windows  
+`*` new updater capable to upgrade major versions  
+`*` new auto-type rewritten from scratch  
+`+` possibility to detect browser URL on Linux  
+`*` external modification protection in desktop versions  
+`+` clear searchbox button  
+`+` more options for auto-lock timeout  
+`+` favicon download improvements  
+`+` auto-type field selection dropdown improvements  
+`+` new completion page after storage provider authentication  
+`+` option to disable caching files in offline storage  
+`+` option to minimize on field copy  
+`-` fixed creating files with Argon2id KDF  
+
+##### v1.16.8 (2021-03-02)
+`-` fix #1726: search in protected fields  
+`-` fix #1713: OneDrive authentication on web  
+`-` fix #1715: storage authentication in Epiphany browser  
+`-` fix #1711: storage authentication in iOS  
+
+##### v1.16.7 (2020-12-31)
+`-` fix #1671: new lines removal issue in notes  
+
+##### v1.16.6 (2020-12-30)
+`-` fix #1668: opening files with bad characters  
+`*` upgraded a vulnerable dependency  
+
+##### v1.16.5 (2020-12-18)
+`-` using custom OneDrive without a secret  
+`+` GitHub funding link  
+
+##### v1.16.4 (2020-12-17)
+`-` fix #1656: false positive report on VirusTotal  
+`+` #1629: possibility to use OneDrive as SPA  
+
+##### v1.16.3 (2020-12-10)
+`-` fix #1650: keyfiles stored in the app can't be used  
+
+##### v1.16.2 (2020-12-10)
+`+` possibility to use V2 keyfiles (.keyx)  
+`-` fixed a missing icon in the local file question box  
+`-` fix #1649: missing Argon2 options  
+`-` minor license screen fixes
+
+##### v1.16.1 (2020-12-04)
+`+` native Apple Silicon build  
+`+` Argon2id KDF support  
+`+` added an option to quit the app and lose all changes   
+`-` fix #1637: git commit in the About box  
+`-` fixed some design glitches  
+`*` keyfile paths are saved by default
+
+##### v1.16.0 (2020-11-29)
+`+` updated icons and visual design  
+`+` new Dark (default) and Light themes  
+`-` fixed a performance issue in searching entries  
+`+` locale-aware date and time formats  
+`*` improved the "Show all file" checkbox behavior  
+`+` shortcut to copy OTP  
+`+` support for WebDAV servers without Last-Modified header  
+`*` switched to Dropbox short-lived access tokens  
+`-` fixed several issues in field editing  
+`-` fix #1561: error during loading configs after reset  
+`-` fixed some issues with minimizing to menubar on macOS  
+
+##### v1.15.7 (2020-09-12)
+`-` fix #1564: broken auto-type on some Linux installations  
+`-` fix #1591: error in old MS Edge  
+`-` fix #1598: fixed header format for KDBX4+AES  
+`-` fix #1597: Dropbox sync now includes scopes  
+`*` PKCE enabled on Dropbox auth  
+`*` updated vulnerable dependencies  
+
+##### v1.15.6 (2020-08-08)
+`-` fix #1553: empty fields display for templates  
+`-` fix #1581: double-clicking KeeWeb icon in Dock  
+
+##### v1.15.5 (2020-06-13)
+`-` fix #1539: broken code signing on Windows  
+
+##### v1.15.4 (2020-06-13)
+`-` fix #1536: added a missing dependency on linux  
+`-` fix #1532: crashes on some Windows builds (updated electron)  
+
+##### v1.15.3 (2020-06-11)
+`-` fix #1535: network errors in Dropbox and GDrive on Windows  
+
+##### v1.15.2 (2020-06-09)
+`-` fix #1530: recursive creation of the portable directory  
+`-` fix #1530: running from directories with hash symbols  
+`+` possibility to debug startup with `--start-logging`  
+`*` updated electron version  
+`-` fixed duplicated YubiKeys displayed in file settings  
+`-` fix #1409: auto-type wrong character issues on Linux  
+
+##### v1.15.1 (2020-06-07)
+`-` fix #1528: OTP generation for stored values  
+
+##### v1.15.0 (2020-06-06)
+`+` YubiKey integration in two modes: OATH and Challenge-Response  
+`+` configs are now encrypted with a key stored in keychain  
+`*` default format for new files is now KDBX4  
+`+` #1460: auto-type on double-clicking field labels  
+`+` #557: Argon2 speed improvements in desktop apps  
+`+` #1503: ARM64 Windows support  
+`+` #1480: option to create a portable installation  
+`+` #1400: auto-apply tag when creating new entry in tag view  
+`*` default theme on macOS is now macOS-Dark   
+`+` #1342: hint that the data will be stored in unencrypted form after exporting  
+`*` #1471: WebDAV url validation, only HTTPS is allowed  
+`+` #1350: clearing master password after auto lock period  
+`+` #830: minimize instead of close option on macOS  
+`+` #448: minimized login option support on macOS  
+`+` #917: option to install without a desktop icon on Windows  
+`-` fix #1463: copying the original url instead of adding https:  
+`-` fix #620: clearing middle-click clipboard in Linux  
+`-` fix #1440: fixed auto-type for maximized windows  
+`-` fix #1509: fixed auto-type for tiling mode in Linux  
+`-` fix #1409: fixed auto-typing Tab character on Debian  
+
+##### v1.14.3 (2020-05-15)
+`*` improved exporting files with markdown notes  
+
+##### v1.14.2 (2020-05-04)
+`-` distinct redirect URIs for storage providers  
+
+##### v1.14.1 (2020-05-02)
+`-` fix #1478: fixed proxy issues with storage providers  
+
+##### v1.14.0 (2020-04-18)
+`+` using OAuth authorization code grant for all storage providers  
+`-` fixed a number of vulnerabilities in opening untrusted kdbx files  
+`+` applied recommendations from the electron security checklist  
+`*` canOpenWebdav is now canOpenStorage  
+`+` option to log out from storages  
+`*` saving only modified settings instead of everything  
+
+##### v1.13.4 (2020-04-15)
+`-` fix #1457: fixed styles in theme plugins  
+`+` #1456: options to hide webdav and password generator  
+
+##### v1.13.3 (2020-04-11)
+`-` fix #1451: fixed slow global auto-type on desktop  
+
+##### v1.13.2 (2020-04-09)
+`+` files previously created as v4.1 will be written as v4.0  
+`+` fixed Docker build  
+`*` builds are now run on CI  
+
+##### v1.13.1 (2020-04-04)
+`-` fix #1444: fixed website favicons and attached images  
+`-` fix #1445: fixed offline mode in Chrome and Firefox  
+`-` fix #1447: fixed opening databases from Dock  
+
+##### v1.13.0 (2020-04-03)
+`-` #1359: fixed Google Drive login issues in desktop apps  
+`+` #1341: auto-lock the app on screen lock on Windows  
+`+` #1065: KEEWEB_PORTABLE_EXECUTABLE_DIR environment variable  
+`*` #1397: Segoe UI font on Windows  
+`+` #1393: option to disable saving and exporting (canSaveTo)  
+`+` #1006: password generator patterns  
+`+` #1309: back button in attachment preview  
+`+` #1142: submit button on mobile password input  
+`+` #766: setting for no/unlimited history  
+`+` #411: option to automatically use group icon for new entries  
+`+` #615: translated shortcut modifier keys  
+`*` #1029: fixed syncing files by timeout when there are no changes  
+`+` #784: AppImage distributable  
+`+` #572: RPM distributable  
+`+` #450: Snap distributable  
+`+` #855: appdata file in deb packages  
+`*` signature key rotated  
+`*` new Windows code signing certificate  
+`+` startup time profiling  
+`+` #1438: content security policy  
+`+` some desktop security improvements from #1437  
+`*` fix #890: deb will no longer install to /opt  
+`-` fix #1396: fixed hyperlinks in notes  
+`-` fix #1323: version in the About dialog  
+`-` fix #734: OTP secrets with spaces  
+`-` fix #1208: webdav credentials corruption  
+`*` fix #1348: fixed password generation entropy  
+`-` fix #1385: fixed a file watcher error on network locations  
+`-` fix #1391: passwords imported from CSV were not hidden  
+`-` fix #1387: fixed drag-drop for otp fields  
+`-` fix #1293: copying full urls  
+`-` fix #1378: screen orientation issues on Android PWA  
+`-` fix #1338: minimized option not working on linux  
+`-` fix #895: generator positioning in list view  
+`-` fix #516: scrolling on the open screen on mobile  
+`-` fix #1295, #1353: displaying passwords as protected fields regardless of settings in the file
+
+##### v1.12.3 (2019-11-06)
+`-` fix #1335: removed the menubar on Windows and Linux  
+`-` fix #1334: saving new files not working  
+`-` fixed entry title input size  
+
+##### v1.12.2 (2019-11-03)
+`-` fixed non-working updater  
+`-` fix #1336: saving disabled storage option  
+`-` fix #1333: item selection in the auto-type pop-up  
+`-` fix #1337: displaying groups in trash  
+
+##### v1.12.1 (2019-10-27)
+`-` fix #1324: duplicated shortcut editor in settings  
+`-` fix #1313: disabled code signing for macOS dmg  
+
+##### v1.12.0 (2019-10-26)
+`-` #1022: fuzzy search  
+`+` #1108: setting for running in an iframe  
+`+` #963: keyboard shortcut to copy OTP in background  
+`+` #565: global shortcut to open KeeWeb  
+`+` #862: downloading attachments on mobile  
+`+` #480: option to launch the app minimized  
+`+` #1307: option to disable Markdown support  
+`+` #1310: password generator on the start screen  
+`+` #197: mobile actions panel  
+`-` fix #1273: untranslated menu items  
+`-` fix #1311: better monospace fonts  
+`-` fix #1319: removed a storage request for invalid passwords  
+
+##### v1.11.10 (2019-10-16)
+`-` fix #1305: WebDAV issues  
+`-` fix #1263: desktop apps crashes when argon2 is used  
+
+##### v1.11.9 (2019-10-13)
+`-` fix #1300: selecting auto-type sequence items issues  
+`-` fix #1290: generator popup positioning in custom themes  
+
+##### v1.11.8 (2019-10-11)
+`-` fix #1292: macOS app notarization  
+`-` fix #1296: search in auto-type  
+`-` fixed issues with some theme plugins  
+
+##### v1.11.7 (2019-10-08)
+`-` fix #1289: crash on Auto sorting mode  
+`-` fix #1288: issues when opening a file during in auto-type mode  
+
+##### v1.11.6 (2019-10-04)
+`-` fix #1285: issues in moving entries across files  
+
+##### v1.11.5 (2019-09-29)
+`-` fix #1279: error opening files with saved keyfiles  
+
+##### v1.11.4 (2019-09-29)
+`-` fix #1277: auto-type window matching on Linux  
+`-` fix #1278: entry selection auto-type window issues  
+`-` fixed displaying errors on the plugins page  
+
+##### v1.11.3 (2019-09-29)
+`-` fix #1275: starting the app after closing on macOS  
+`-` fix #1276 GDrive connection issues  
+
+##### v1.11.2 (2019-09-29)
+`-` fix #1272: Argon2 error  
+`-` fixed Dropbox connection on iOS 13 homescreen  
+`-` fixed plugin search filtering  
+
+##### v1.11.1 (2019-09-28)
+`-` fix #1270: password change control focus  
+`-` fix #1271: loading custom plugins from config  
+
+##### v1.11.0 (2019-09-28)
+`+` #1125: field actions: copy, reveal, auto-type  
+`+` #107: multiline custom fields support  
+`+` #713: markdown notes  
+`+` #1243: auto-type any field  
+`+` #336: moving entries across files  
+`+` #348: configurable system-wide shortcuts  
+`+` #1255: file format version and kdf selection in settings  
+`+` #743: copying entry fields to clipboard  
+`+` #498: CSV import  
+`+` #564: Steam OTP support  
+`+` #1226: 7-digit Authy OTP support  
+`*` #502: increased the default value of encryption rounds  
+`+` #1252: public key rotation  
+`*` #156: using ServiceWorker instead of AppCache  
+`*` devtools are now opened with alt-cmd-I  
+`-` fix #764: multiple attachments display  
+`-` fix multi-line fields display in history  
+`-` fix #554: checking active window id during auto-type  
+`-` fix plugin gallery layout on mobile  
+`-` fix #1141: opening file from storage if cache is not available  
+`-` fixed a color flash on start  
+
+##### v1.10.1 (2019-09-20)
+`-` fixed Argon2 issues in Safari 13  
+`-` fix #1259: using absolute paths in webdav  
+
+##### v1.10.0 (2019-09-09)
+`+` macOS Dark theme  
+`+` HTML export  
+`+` pretty-printing exported XML files  
+`+` config option to disable XML export (canExportXml)  
+`+` XML files can be now opened as regular files  
+`*` donation link changed  
+`-` fixed field editing styles  
+`-` fix #1154: relative Destination header in WebDAV MOVE  
+`-` fix #1129: webdav storage error on Unicode filenames  
+`*` dropped support for browsers without css variables  
+`*` displaying websites as HTTPS if no scheme is provided  
+`+` confirmation for deleting an entry on mobile  
+`-` fix #1244: deb file permissions issue  
+
+##### v1.9.3 (2019-09-07)
+`-` fixed group settings not being displayed  
+`-` fixed menu padding issues in some browsers  
+`-` fixed titlebar color on macOS dark theme  
+
+##### v1.9.2 (2019-08-22)
+`-` fix #1235: custom themes loading  
+`-` fix #1234: auto-type issues in xubuntu/xfce  
+
+##### v1.9.1 (2019-08-19)
+`-` fix #1231: tooltip arrow positioning  
+`+` improved ranking search  
+`-` fix #1232: removed an unwanted menubar on windows and linux  
+`-` fix #1234: auto-type not working on linux  
+
+##### v1.9.0 (2019-08-18)
+`-` fix #1221: added '30 min' lock option  
+`-` fixed generator style issues in Firefox  
+`+` option to hide password in the generator  
+`-` fix #1209: copying app information to clipboard  
+`-` fix #1215: url matching when there's no website field  
+`-` fix #1171: enabled updater on linux  
+`*` upgraded build system  
+`*` upgraded electron to v6  
+`-` removed support for linux/ia32: https://electronjs.org/blog/linux-32bit-support 
+
+##### v1.8.2 (2019-04-22)
+`-` fix #1163: fixed libgconf-2-4 dependency  
+
+##### v1.8.1 (2019-04-05)
+`-` fix #1152: broken filtering after auto-type  
+
 ##### v1.8.0 (2019-03-31)
 `+` iOS PWA improvements  
 `+` auto-type improvements  
@@ -293,7 +637,8 @@ Performance, stability and quality improvements
 `+` track changes in local files  
 `+` mobile layout made more convenient  
 `+` command-line option to disable updater  
-`+` using system proxy settings for updater  
+`+` using system proxy se
+ttings for updater  
 `+` webapp icon for touch devices  
 `-` #80: prevent data loss on group move  
 `-` issues with clipboard clear fixed  

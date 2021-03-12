@@ -1,14 +1,17 @@
-const Logger = require('../util/logger');
+import { Logger } from 'util/logger';
 
-const logger = new Logger('auto-type-obfuscator');
-logger.setLevel(localStorage.autoTypeDebug ? Logger.Level.All : Logger.Level.Warn);
+const logger = new Logger(
+    'auto-type-obfuscator',
+    undefined,
+    localStorage.debugAutoType ? Logger.Level.All : Logger.Level.Warn
+);
 
 const MaxFakeOps = 30;
 const MaxSteps = 1000;
 const MaxCopy = 2;
 const FakeCharAlphabet = 'ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnpqrstuvwxyz123456789O0oIl';
 
-const AutoTypeObfuscator = function(chars) {
+const AutoTypeObfuscator = function (chars) {
     this.chars = chars;
     this.inputChars = [];
     this.inputCursor = 0;
@@ -18,7 +21,7 @@ const AutoTypeObfuscator = function(chars) {
     this.copyCount = 0;
 };
 
-AutoTypeObfuscator.prototype.obfuscate = function() {
+AutoTypeObfuscator.prototype.obfuscate = function () {
     while (!this.finished()) {
         this.step();
         if (this.stepCount++ > MaxSteps) {
@@ -32,12 +35,16 @@ AutoTypeObfuscator.prototype.obfuscate = function() {
     return this.ops;
 };
 
-AutoTypeObfuscator.prototype.finished = function() {
-    return this.chars.length === this.inputChars.length &&
-        this.chars.every(function(ch, ix) { return this.inputChars[ix].ch === ch; }, this);
+AutoTypeObfuscator.prototype.finished = function () {
+    return (
+        this.chars.length === this.inputChars.length &&
+        this.chars.every(function (ch, ix) {
+            return this.inputChars[ix].ch === ch;
+        }, this)
+    );
 };
 
-AutoTypeObfuscator.prototype.step = function() {
+AutoTypeObfuscator.prototype.step = function () {
     const isFake = this.stepCount < MaxFakeOps && Math.random() > this.stepCount / MaxFakeOps;
     if (isFake) {
         this.stepFake();
@@ -45,11 +52,11 @@ AutoTypeObfuscator.prototype.step = function() {
         this.stepReal();
     }
     if (logger.getLevel() >= Logger.Level.Debug) {
-        logger.debug('value', this.inputChars.map(ic => ic.ch).join(''));
+        logger.debug('value', this.inputChars.map((ic) => ic.ch).join(''));
     }
 };
 
-AutoTypeObfuscator.prototype.stepFake = function() {
+AutoTypeObfuscator.prototype.stepFake = function () {
     const pos = Math.floor(Math.random() * (this.inputChars.length + 1));
     const ch = FakeCharAlphabet[Math.floor(Math.random() * FakeCharAlphabet.length)];
     logger.info('step.fake', pos, ch);
@@ -78,7 +85,7 @@ AutoTypeObfuscator.prototype.stepFake = function() {
     }
 };
 
-AutoTypeObfuscator.prototype.stepReal = function() {
+AutoTypeObfuscator.prototype.stepReal = function () {
     const possibleActions = [];
     const inputRealPositions = [];
     let i;
@@ -106,7 +113,7 @@ AutoTypeObfuscator.prototype.stepReal = function() {
                     break;
                 }
             }
-            possibleActions.push({ ins: true, ch: this.chars[i], ix: i, from: from, to: to });
+            possibleActions.push({ ins: true, ch: this.chars[i], ix: i, from, to });
         }
     }
     const action = possibleActions[Math.floor(Math.random() * possibleActions.length)];
@@ -127,7 +134,7 @@ AutoTypeObfuscator.prototype.stepReal = function() {
     }
 };
 
-AutoTypeObfuscator.prototype.moveToPos = function(pos) {
+AutoTypeObfuscator.prototype.moveToPos = function (pos) {
     logger.debug('moveToPos', pos);
     while (this.inputCursor > pos) {
         this.moveLeft();
@@ -137,47 +144,47 @@ AutoTypeObfuscator.prototype.moveToPos = function(pos) {
     }
 };
 
-AutoTypeObfuscator.prototype.moveLeft = function() {
+AutoTypeObfuscator.prototype.moveLeft = function () {
     logger.debug('moveLeft');
     this.ops.push({ type: 'key', value: 'left' });
     this.inputCursor--;
     this.inputSel = 0;
 };
 
-AutoTypeObfuscator.prototype.moveRight = function() {
+AutoTypeObfuscator.prototype.moveRight = function () {
     logger.debug('moveRight');
     this.ops.push({ type: 'key', value: 'right' });
     this.inputCursor++;
     this.inputSel = 0;
 };
 
-AutoTypeObfuscator.prototype.inputChar = function(ch) {
+AutoTypeObfuscator.prototype.inputChar = function (ch) {
     logger.debug('inputChar', ch);
     this.ops.push({ type: 'text', value: ch });
-    this.inputChars.splice(this.inputCursor, this.inputSel, { ch: ch });
+    this.inputChars.splice(this.inputCursor, this.inputSel, { ch });
     this.inputCursor++;
     this.inputSel = 0;
 };
 
-AutoTypeObfuscator.prototype.copyPaste = function(ch) {
+AutoTypeObfuscator.prototype.copyPaste = function (ch) {
     logger.debug('copyPaste', ch);
-    this.ops.push({type: 'cmd', value: 'copyPaste', arg: ch});
-    this.inputChars.splice(this.inputCursor, this.inputSel, { ch: ch });
+    this.ops.push({ type: 'cmd', value: 'copyPaste', arg: ch });
+    this.inputChars.splice(this.inputCursor, this.inputSel, { ch });
     this.inputCursor++;
     this.inputSel = 0;
 };
 
-AutoTypeObfuscator.prototype.selectText = function(backward, count) {
+AutoTypeObfuscator.prototype.selectText = function (backward, count) {
     logger.debug('selectText', backward ? 'left' : 'right', count);
     const ops = [];
     for (let i = 0; i < count; i++) {
         ops.push({ type: 'key', value: backward ? 'left' : 'right' });
     }
     if (ops.length === 1) {
-        ops[0].mod = {'+': true};
+        ops[0].mod = { '+': true };
         this.ops.push(ops[0]);
     } else {
-        this.ops.push({type: 'group', value: ops, mod: {'+': true}});
+        this.ops.push({ type: 'group', value: ops, mod: { '+': true } });
     }
     if (backward) {
         this.inputCursor -= count;
@@ -185,7 +192,7 @@ AutoTypeObfuscator.prototype.selectText = function(backward, count) {
     this.inputSel = count;
 };
 
-AutoTypeObfuscator.prototype.deleteText = function(backward) {
+AutoTypeObfuscator.prototype.deleteText = function (backward) {
     logger.debug('deleteText', backward ? 'left' : 'right');
     this.ops.push({ type: 'key', value: backward ? 'bs' : 'del' });
     if (this.inputSel) {
@@ -199,4 +206,4 @@ AutoTypeObfuscator.prototype.deleteText = function(backward) {
     }
 };
 
-module.exports = AutoTypeObfuscator;
+export { AutoTypeObfuscator };

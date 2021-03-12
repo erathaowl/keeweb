@@ -1,58 +1,74 @@
-const Backbone = require('backbone');
-const Scrollable = require('../../mixins/scrollable');
-const Keys = require('../../const/keys');
-const KeyHandler = require('../../comp/key-handler');
+import { View } from 'framework/views/view';
+import { Events } from 'framework/events';
+import { Keys } from 'const/keys';
+import { Scrollable } from 'framework/views/scrollable';
+import { StringFormat } from 'util/formatting/string-format';
+import template from 'templates/settings/settings.hbs';
 
-const SettingsView = Backbone.View.extend({
-    template: require('templates/settings/settings.hbs'),
+class SettingsView extends View {
+    parent = '.app__body';
 
-    views: null,
+    template = template;
 
-    events: {
+    events = {
         'click .settings__back-button': 'returnToApp'
-    },
+    };
 
-    initialize: function () {
+    constructor(model, options) {
+        super(model, options);
         this.initScroll();
-        this.listenTo(Backbone, 'set-page', this.setPage);
-        this.views = { };
-        KeyHandler.onKey(Keys.DOM_VK_ESCAPE, this.returnToApp, this);
-    },
+        this.listenTo(Events, 'set-page', this.setPage);
+        this.onKey(Keys.DOM_VK_ESCAPE, this.returnToApp);
+    }
 
-    remove: function() {
-        KeyHandler.offKey(Keys.DOM_VK_ESCAPE, this.returnToApp, this);
-        Backbone.View.prototype.remove.call(this);
-    },
-
-    render: function () {
-        this.renderTemplate();
+    render() {
+        super.render();
         this.createScroll({
             root: this.$el.find('.settings')[0],
             scroller: this.$el.find('.scroller')[0],
             bar: this.$el.find('.scroller__bar')[0]
         });
         this.pageEl = this.$el.find('.scroller');
-        return this;
-    },
+    }
 
-    setPage: function (e) {
-        const SettingsPageView = require('./settings-' + e.page + '-view');
+    setPage(e) {
+        let { page, section, file } = e;
+        if (page === 'file' && file && file.external) {
+            page = 'file-external';
+        }
+        const module = require('./settings-' + page + '-view');
+        const viewName = StringFormat.pascalCase(page);
+        const SettingsPageView = module[`Settings${viewName}View`];
         if (this.views.page) {
             this.views.page.remove();
         }
-        this.views.page = new SettingsPageView({ el: this.pageEl, model: e.file });
+        this.views.page = new SettingsPageView(file, { parent: this.pageEl[0] });
         this.views.page.appModel = this.model;
         this.views.page.render();
-        this.file = e.file;
-        this.page = e.page;
+        this.file = file;
+        this.page = page;
         this.pageResized();
-    },
-
-    returnToApp: function() {
-        Backbone.trigger('toggle-settings', false);
+        this.scrollToSection(section);
     }
-});
 
-_.extend(SettingsView.prototype, Scrollable);
+    scrollToSection(section) {
+        let scrollEl;
+        if (section) {
+            scrollEl = this.views.page.el.querySelector(`#${section}`);
+        }
+        if (!scrollEl) {
+            scrollEl = this.views.page.el.querySelector(`h1`);
+        }
+        if (scrollEl) {
+            scrollEl.scrollIntoView(true);
+        }
+    }
 
-module.exports = SettingsView;
+    returnToApp() {
+        Events.emit('toggle-settings', false);
+    }
+}
+
+Object.assign(SettingsView.prototype, Scrollable);
+
+export { SettingsView };

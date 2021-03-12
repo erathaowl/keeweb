@@ -1,27 +1,33 @@
 .dropdown {
-  position: absolute;
-  z-index: $z-index-no-modal;
-  border-radius: $base-border-radius;
-  @include th {
-    background: th(background-color);
+    position: absolute;
+    z-index: $z-index-no-modal;
+    border-radius: var(--block-border-radius);
+    background: var(--background-color);
     border: light-border();
     box-shadow: dropdown-box-shadow();
-  }
-  &__item {
-    padding: 8px 12px;
-    cursor: pointer;
-    white-space: nowrap;
-    &--active, &--active:hover {
-      @include area-selected(right);
+    padding: $tiny-spacing;
+    &__item {
+        padding: 8px 12px;
+        cursor: pointer;
+        white-space: nowrap;
+        border-radius: var(--block-border-radius);
+        &--active,
+        &--active:hover {
+            @include area-selected();
+        }
+        @include nomobile {
+            @include area-selectable();
+            &:hover {
+                color: var(--selected-item-text-color);
+                background-color: var(--action-color);
+            }
+            &--active,
+            &--active:hover {
+                @include area-selected();
+            }
+        }
+        &-icon {
+            width: 1.6em;
+        }
     }
-    @include nomobile {
-      @include area-selectable(right);
-      &--active, &--active:hover {
-        @include area-selected(right);
-      }
-    }
-    &-icon {
-      width: 1.6em;
-    }
-  }
 }

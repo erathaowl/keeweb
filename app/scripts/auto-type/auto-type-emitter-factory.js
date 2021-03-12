@@ -1,13 +1,19 @@
-const Launcher = require('../comp/launcher');
+import { Launcher } from 'comp/launcher';
+import { AppSettingsModel } from 'models/app-settings-model';
+import { AutoTypeEmitter } from 'auto-type/auto-type-emitter';
 
 const AutoTypeEmitterFactory = {
-    create: function(callback) {
+    create(callback, windowId) {
         if (Launcher && Launcher.autoTypeSupported) {
-            const AutoTypeEmitter = require('./emitter/auto-type-emitter-' + Launcher.platform());
-            return new AutoTypeEmitter(callback);
+            if (AppSettingsModel.useLegacyAutoType) {
+                const { AutoTypeEmitter } = require('./emitter/auto-type-emitter-' +
+                    Launcher.platform());
+                return new AutoTypeEmitter(callback, windowId);
+            }
+            return new AutoTypeEmitter(callback, windowId);
         }
         return null;
     }
 };
 
-module.exports = AutoTypeEmitterFactory;
+export { AutoTypeEmitterFactory };

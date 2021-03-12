@@ -1,18 +1,18 @@
-const Launcher = require('../comp/launcher');
+import { Launcher } from 'comp/launcher';
 
-const IoFileCache = function(config) {
+const IoFileCache = function (config) {
     this.basePath = null;
     this.cacheName = config.cacheName;
     this.logger = config.logger;
 };
 
-_.extend(IoFileCache.prototype, {
+Object.assign(IoFileCache.prototype, {
     initFs(callback) {
         if (this.basePath) {
             return callback();
         }
         const basePath = Launcher.getUserDataPath(this.cacheName);
-        Launcher.mkdir(basePath, err => {
+        Launcher.mkdir(basePath, (err) => {
             if (err) {
                 this.logger.error('Error creating plugin folder');
             } else {
@@ -27,27 +27,31 @@ _.extend(IoFileCache.prototype, {
     },
 
     save(id, data, callback) {
-        this.initFs(err => {
+        this.initFs((err) => {
             if (err) {
                 return callback && callback(err, null);
             }
             this.logger.debug('Save', id);
             const ts = this.logger.ts();
             const path = this.resolvePath(id);
-            Launcher.writeFile(path, data, err => {
+            Launcher.writeFile(path, data, (err) => {
                 if (err) {
                     this.logger.error('Error saving file', id, err);
-                    if (callback) { callback(err); }
+                    if (callback) {
+                        callback(err);
+                    }
                 } else {
                     this.logger.debug('Saved', id, this.logger.ts(ts));
-                    if (callback) { callback(); }
+                    if (callback) {
+                        callback();
+                    }
                 }
             });
         });
     },
 
     load(id, callback) {
-        this.initFs(err => {
+        this.initFs((err) => {
             if (err) {
                 return callback && callback(err, null);
             }
@@ -57,34 +61,42 @@ _.extend(IoFileCache.prototype, {
             Launcher.readFile(path, undefined, (data, err) => {
                 if (err) {
                     this.logger.error('Error loading file', id, err);
-                    if (callback) { callback(err); }
+                    if (callback) {
+                        callback(err);
+                    }
                 } else {
                     this.logger.debug('Loaded', id, this.logger.ts(ts));
-                    if (callback) { callback(null, data); }
+                    if (callback) {
+                        callback(null, data);
+                    }
                 }
             });
         });
     },
 
     remove(id, callback) {
-        this.initFs(err => {
+        this.initFs((err) => {
             if (err) {
                 return callback && callback(err, null);
             }
             this.logger.debug('Remove', id);
             const ts = this.logger.ts();
             const path = this.resolvePath(id);
-            Launcher.deleteFile(path, err => {
+            Launcher.deleteFile(path, (err) => {
                 if (err) {
                     this.logger.error('Error removing file', id, err);
-                    if (callback) { callback(err); }
+                    if (callback) {
+                        callback(err);
+                    }
                 } else {
                     this.logger.debug('Removed', id, this.logger.ts(ts));
-                    if (callback) { callback(); }
+                    if (callback) {
+                        callback();
+                    }
                 }
             });
         });
     }
 });
 
-module.exports = IoFileCache;
+export { IoFileCache };

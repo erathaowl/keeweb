@@ -1,18 +1,25 @@
-const Backbone = require('backbone');
-const Logger = require('../../util/logger');
-const Format = require('../../util/format');
+import { View } from 'framework/views/view';
+import { StringFormat } from 'util/formatting/string-format';
+import { Logger } from 'util/logger';
+import template from 'templates/settings/settings-logs-view.hbs';
 
-const SettingsLogView = Backbone.View.extend({
-    template: require('templates/settings/settings-logs-view.hbs'),
+class SettingsLogsView extends View {
+    parent = '.settings__general-advanced';
+    template = template;
+    levelToColor = { debug: 'muted', warn: 'yellow', error: 'red' };
 
     render() {
-        const logs = Logger.getLast().map(item => ({
+        const logs = Logger.getLast().map((item) => ({
             level: item.level,
-            msg: '[' + Format.padStr(item.level.toUpperCase(), 5) + '] ' + item.args.map(arg => this.mapArg(arg)).join(' ')
+            color: this.levelToColor[item.level],
+            msg:
+                '[' +
+                StringFormat.padStr(item.level.toUpperCase(), 5) +
+                '] ' +
+                item.args.map((arg) => this.mapArg(arg)).join(' ')
         }));
-        this.renderTemplate({ logs: logs });
-        return this;
-    },
+        super.render({ logs });
+    }
 
     mapArg(arg) {
         if (arg === null) {
@@ -28,7 +35,7 @@ const SettingsLogView = Backbone.View.extend({
             return arg ? arg.toString() : arg;
         }
         if (arg instanceof Array) {
-            return '[' + arg.map(item => this.mapArg(item)).join(', ') + ']';
+            return '[' + arg.map((item) => this.mapArg(item)).join(', ') + ']';
         }
         let str = arg.toString();
         if (str === '[object Object]') {
@@ -45,6 +52,6 @@ const SettingsLogView = Backbone.View.extend({
         }
         return str;
     }
-});
+}
 
-module.exports = SettingsLogView;
+export { SettingsLogsView };
