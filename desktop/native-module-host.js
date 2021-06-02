@@ -4,6 +4,7 @@ const { reqNative } = require('./scripts/util/req-native');
 const YubiKeyVendorIds = [0x1050];
 const attachedYubiKeys = [];
 let usbListenerRunning = false;
+let usbListenerInitialized = false;
 let autoType;
 let callback;
 
@@ -15,14 +16,18 @@ const messageHandlers = {
             return;
         }
 
-        const usb = reqNative('usb');
+        if (!usbListenerInitialized) {
+            const usbDetection = reqNative('usb-detection');
+
+            usbDetection.registerAdded(usbDeviceAttached);
+            usbDetection.registerRemoved(usbDeviceDetached);
+
+            usbDetection.startMonitoring();
+
+            usbListenerInitialized = true;
+        }
 
         fillAttachedYubiKeys();
-
-        usb.on('attach', usbDeviceAttached);
-        usb.on('detach', usbDeviceDetached);
-
-        usb._enableHotplugEvents();
 
         usbListenerRunning = true;
     },
@@ -31,13 +36,6 @@ const messageHandlers = {
         if (!usbListenerRunning) {
             return;
         }
-
-        const usb = reqNative('usb');
-
-        usb.off('attach', usbDeviceAttached);
-        usb.off('detach', usbDeviceDetached);
-
-        usb._disableHotplugEvents();
 
         usbListenerRunning = false;
         attachedYubiKeys.length = 0;
@@ -149,10 +147,13 @@ const messageHandlers = {
 };
 
 function isYubiKey(device) {
-    return YubiKeyVendorIds.includes(device.deviceDescriptor.idVendor);
+    return YubiKeyVendorIds.includes(device.vendorId);
 }
 
 function usbDeviceAttached(device) {
+    if (!usbListenerRunning) {
+        return;
+    }
     if (isYubiKey(device)) {
         attachedYubiKeys.push(device);
         reportYubiKeys();
@@ -160,6 +161,9 @@ function usbDeviceAttached(device) {
 }
 
 function usbDeviceDetached(device) {
+    if (!usbListenerRunning) {
+        return;
+    }
     if (isYubiKey(device)) {
         const index = attachedYubiKeys.findIndex((yk) => yk.deviceAddress === device.deviceAddress);
         if (index >= 0) {
@@ -170,9 +174,14 @@ function usbDeviceDetached(device) {
 }
 
 function fillAttachedYubiKeys() {
-    const usb = reqNative('usb');
-    attachedYubiKeys.push(...usb.getDeviceList().filter(isYubiKey));
-    reportYubiKeys();
+    const usbDetection = reqNative('usb-detection');
+    usbDetection.find((ignoredError, devices) => {
+        if (devices) {
+            attachedYubiKeys.push(...devices.filter(isYubiKey));
+            reportYubiKeys();
+        }
+        return undefined;
+    });
 }
 
 function reportYubiKeys() {
@@ -291,6 +300,13 @@ function startInMain(channel) {
     callback = (cmd, ...args) => {
         channel.emit('message', { cmd, args });
     };
+
+    const { app } = require('electron');
+    app.on('will-quit', () => {
+        if (usbListenerInitialized) {
+            reqNative('usb-detection').stopMonitoring();
+        }
+    });
 }
 
 module.exports = { startInOwnProcess, startInMain };

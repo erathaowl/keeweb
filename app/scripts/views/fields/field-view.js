@@ -1,4 +1,4 @@
-import kdbxweb from 'kdbxweb';
+import * as kdbxweb from 'kdbxweb';
 import { View } from 'framework/views/view';
 import { Events } from 'framework/events';
 import { CopyPaste } from 'comp/browser/copy-paste';
@@ -45,6 +45,7 @@ class FieldView extends View {
             multiline: this.model.multiline,
             title: this.model.title,
             canEditTitle: this.model.newField,
+            canGen: this.model.canGen,
             protect: this.value && this.value.isProtected,
             hasOptions: !Features.isMobile && renderedValue && this.hasOptions
         });
@@ -187,6 +188,10 @@ class FieldView extends View {
         }
         const protectedEqual =
             (newVal && newVal.isProtected) === (this.value && this.value.isProtected);
+        if (!extra?.newField && this.model.newField) {
+            extra ??= {};
+            extra.newField = this.model.newField;
+        }
         const nameChanged = extra && extra.newField;
         let arg;
         if (newVal !== undefined && (!textEqual || !protectedEqual || nameChanged)) {
